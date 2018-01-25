@@ -43,7 +43,7 @@
 #define ALPHA_FACTOR_CONST_ALPHA              6
 #define ALPHA_FACTOR_ONE_MINUS_CONST_ALPHA    7
 
-
+#define	 GE2D_GET_CAP               0x470b
 #define  GE2D_BLEND_NOALPHA_NOBLOCK 0x470a
 #define  GE2D_BLEND_NOALPHA         0x4709
 #define  GE2D_STRETCHBLIT_NOALPHA   0x4702
@@ -54,6 +54,8 @@
 #define  GE2D_FILLRECTANGLE         0x46fd
 #define  GE2D_SET_COEF              0x46fb
 #define  GE2D_ANTIFLICKER_ENABLE    0x46f8
+
+extern int cap_attr;
 
 typedef enum {
     OSD0_OSD0 = 0,
@@ -174,6 +176,48 @@ struct config_planes_ion_s {
 	int shared_fd;
 };
 
+struct config_para_ex_ion_s_en {
+	struct src_dst_para_ex_s src_para;
+	struct src_dst_para_ex_s src2_para;
+	struct src_dst_para_ex_s dst_para;
+
+	/* key mask */
+	struct src_key_ctrl_s  src_key;
+	struct src_key_ctrl_s  src2_key;
+
+	unsigned char src1_cmult_asel;
+	unsigned char src2_cmult_asel;
+	int alu_const_color;
+	unsigned char src1_gb_alpha_en;
+	unsigned src1_gb_alpha;
+	unsigned op_mode;
+	unsigned char bitmask_en;
+	unsigned char bytemask_only;
+	unsigned int  bitmask;
+	unsigned char dst_xy_swap;
+
+	/* scaler and phase releated */
+	unsigned hf_init_phase;
+	int hf_rpt_num;
+	unsigned hsc_start_phase_step;
+	int hsc_phase_slope;
+	unsigned vf_init_phase;
+	int vf_rpt_num;
+	unsigned vsc_start_phase_step;
+	int vsc_phase_slope;
+	unsigned char src1_vsc_phase0_always_en;
+	unsigned char src1_hsc_phase0_always_en;
+	/* 1bit, 0: using minus, 1: using repeat data */
+	unsigned char src1_hsc_rpt_ctrl;
+	/* 1bit, 0: using minus  1: using repeat data */
+	unsigned char src1_vsc_rpt_ctrl;
+
+	/* canvas info */
+	struct config_planes_ion_s src_planes[4];
+	struct config_planes_ion_s src2_planes[4];
+	struct config_planes_ion_s dst_planes[4];
+};
+
 struct config_para_ex_ion_s {
 	struct src_dst_para_ex_s src_para;
 	struct src_dst_para_ex_s src2_para;
@@ -185,10 +229,12 @@ struct config_para_ex_ion_s {
 
 	unsigned char src1_cmult_asel;
 	unsigned char src2_cmult_asel;
-
+	unsigned char src2_cmult_ad;
 	int alu_const_color;
 	unsigned char src1_gb_alpha_en;
 	unsigned src1_gb_alpha;
+	unsigned char src2_gb_alpha_en;
+	unsigned int src2_gb_alpha;
 	unsigned op_mode;
 	unsigned char bitmask_en;
 	unsigned char bytemask_only;
@@ -339,5 +385,6 @@ struct config_para_ex_ion_s {
 #define GE2D_CONFIG_EX  _IOW(GE2D_IOC_MAGIC, 0x01, struct config_para_ex_s)
 #define GE2D_SRCCOLORKEY    _IOW(GE2D_IOC_MAGIC, 0x02, struct config_para_s)
 #define GE2D_CONFIG_EX_ION	 _IOW(GE2D_IOC_MAGIC, 0x03,  struct config_para_ex_ion_s)
+#define GE2D_CONFIG_EX_ION_EN	 _IOW(GE2D_IOC_MAGIC, 0x03,  struct config_para_ex_ion_s_en)
 
 #endif /* GE2D_H */

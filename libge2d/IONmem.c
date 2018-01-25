@@ -89,12 +89,15 @@ unsigned long CMEM_alloc(size_t size, IONMEM_AllocParams *params)
         return 0;
     }
 
-    ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_CARVEOUT_MASK, 0, &params->mIonHnd);
+    ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_TYPE_DMA_MASK, 0, &params->mIonHnd);
     if (ret < 0) {
-        ion_close(cmem_fd);
-        __E("ion_alloc failed, errno=%d", errno);
-        cmem_fd = -1;
-        return -ENOMEM;
+        ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_CARVEOUT_MASK, 0, &params->mIonHnd);
+        if (ret < 0) {
+            ion_close(cmem_fd);
+            __E("ion_alloc failed, errno=%d", errno);
+            cmem_fd = -1;
+            return -ENOMEM;
+        }
     }
     ret = ion_share(cmem_fd, params->mIonHnd, &params->mImageFd);
     if (ret < 0) {

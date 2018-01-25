@@ -19,7 +19,7 @@
 #include "ge2d_com.h"
 #include <IONmem.h>
 #include "aml_ge2d.h"
-
+#include <linux/ge2d.h>
 
 IONMEM_AllocParams cmemParm_src;
 IONMEM_AllocParams cmemParm_src2;
@@ -62,7 +62,17 @@ void aml_ge2d_exit(void)
     CMEM_exit();
 }
 
-
+void aml_ge2d_get_cap(void)
+{
+    int ret = -1;
+    int cap_mask = 0;
+    ret = ioctl(fd_ge2d, GE2D_GET_CAP, &cap_mask);
+    if (ret != 0) {
+        E_GE2D("%s,%d,ret %d,ioctl failed!\n",__FUNCTION__,__LINE__, ret);
+        cap_attr = -1;
+    }
+    cap_attr = cap_mask;
+}
 
 void aml_ge2d_mem_free(aml_ge2d_info_t *pge2dinfo)
 {

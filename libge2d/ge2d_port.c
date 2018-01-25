@@ -18,7 +18,6 @@
 #include "ge2d_port.h"
 #include "ge2d_com.h"
 
-
 #define   FILE_NAME_GE2D        "/dev/ge2d"
 
 #define CANVAS_ALIGNED(x)        (((x) + 31) & ~31)
@@ -86,7 +85,7 @@ static int  pixel_to_ge2d_format(int img_format, int *pge2d_format,int *p_bpp)
     return is_rgb;
 }
 
-
+int cap_attr;
 
 
 static void ge2d_set_canvas(int bpp, int w,int h, int *canvas_w, int *canvas_h)
@@ -291,8 +290,10 @@ static int ge2d_fillrectangle_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     }
     ge2d_config_ex.alu_const_color = pge2dinfo->const_color;
     ge2d_config_ex.src1_gb_alpha = input_buffer_info->plane_alpha & 0xff;
-
-    ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
+    if (cap_attr == -1)
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION_EN, &ge2d_config_ex);
+    else
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
     if (ret < 0) {
         E_GE2D("ge2d config ex ion failed. \n");
         return ge2d_fail;
@@ -512,8 +513,10 @@ static int ge2d_blit_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
         ge2d_config_ex.src2_cmult_asel,
         ge2d_config_ex.src1_gb_alpha,
         ge2d_config_ex.src1_gb_alpha_en);
-
-    ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
+    if (cap_attr == -1)
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION_EN, &ge2d_config_ex);
+    else
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
     if (ret < 0) {
         E_GE2D("ge2d config ex ion failed. \n");
         return ge2d_fail;
@@ -547,7 +550,7 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
         b_src_swap = 1;
         D_GE2D("NOTE:src2 not support nv21/nv12, swap src1 and src2!\n");
     }
-    else if ((input_buffer_info->plane_alpha == 0xff) &&
+    else if ((cap_attr == 0) && (input_buffer_info->plane_alpha == 0xff) &&
         (input2_buffer_info->plane_alpha != 0xff) &&
         (input_buffer_info->layer_mode != LAYER_MODE_NON) &&
         (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED)) {
@@ -626,8 +629,27 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     ge2d_config_ex.src2_para.height = input2_buffer_info->rect.h;
     ge2d_config_ex.src2_para.color = input2_buffer_info->def_color;
     ge2d_config_ex.src2_para.fill_color_en = input2_buffer_info->fill_color_en;
-    ge2d_config_ex.src2_cmult_asel = 0;
-
+    if (cap_attr == 0x1) {
+        if (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED)
+            ge2d_config_ex.src2_cmult_asel = 2;
+        else if (input2_buffer_info->layer_mode == LAYER_MODE_COVERAGE)
+            ge2d_config_ex.src2_cmult_asel = 1;
+        else if (input2_buffer_info->layer_mode == LAYER_MODE_NON)
+            ge2d_config_ex.src2_cmult_asel= 0;
+        if ((input_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED) && (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED))
+            ge2d_config_ex.src2_cmult_ad = 0;
+        else if ((input_buffer_info->layer_mode == LAYER_MODE_COVERAGE) && (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED))
+            ge2d_config_ex.src2_cmult_ad = 0;
+        else if ((input_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED) && (input2_buffer_info->layer_mode == LAYER_MODE_COVERAGE))
+            ge2d_config_ex.src2_cmult_ad = 1;
+        else if ((input_buffer_info->layer_mode == LAYER_MODE_COVERAGE) && (input2_buffer_info->layer_mode == LAYER_MODE_COVERAGE))
+            ge2d_config_ex.src2_cmult_ad = 1;
+        else if ((input_buffer_info->layer_mode == LAYER_MODE_COVERAGE) && (input2_buffer_info->layer_mode == LAYER_MODE_NON))
+            ge2d_config_ex.src2_cmult_ad = 3;
+        else
+            ge2d_config_ex.src2_cmult_ad = 0;
+    } else
+        ge2d_config_ex.src2_cmult_asel= 0;
     ge2d_config_ex.dst_para.mem_type = output_buffer_info->memtype;
     ge2d_config_ex.dst_para.format = dst_format;
     ge2d_config_ex.dst_para.left = 0;
@@ -847,13 +869,22 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     ge2d_config_ex.alu_const_color = pge2dinfo->const_color;
     ge2d_config_ex.src1_gb_alpha = input_buffer_info->plane_alpha & 0xff;
     ge2d_config_ex.src1_gb_alpha_en = 1;
-
-    D_GE2D("blend:src1_cmult_asel=%d,src2_cmult_ase2=%d,gl_alpha=%x,src1_gb_alpha_en=%d\n",
+    if (cap_attr == 0x1) {
+        ge2d_config_ex.src2_gb_alpha = input2_buffer_info->plane_alpha & 0xff;
+        ge2d_config_ex.src2_gb_alpha_en = 1;
+    }
+    D_GE2D("blend:src1_cmult_asel=%d,src2_cmult_ase2=%d,gl_alpha=%x,src1_gb_alpha_en=%d, src2_gb_alpha=%x, src2_gb_alpha_en=%d, src2_cmult_ad=%d\n",
         ge2d_config_ex.src1_cmult_asel,
         ge2d_config_ex.src2_cmult_asel,
         ge2d_config_ex.src1_gb_alpha,
-        ge2d_config_ex.src1_gb_alpha_en);
-    ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
+        ge2d_config_ex.src1_gb_alpha_en,
+        ge2d_config_ex.src2_gb_alpha,
+         ge2d_config_ex.src2_gb_alpha_en,
+        ge2d_config_ex.src2_cmult_ad);
+    if (cap_attr == -1)
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION_EN, &ge2d_config_ex);
+    else
+        ret = ioctl(fd, GE2D_CONFIG_EX_ION, &ge2d_config_ex);
     if (ret < 0) {
         E_GE2D("ge2d config ex ion failed. \n");
         return ge2d_fail;
