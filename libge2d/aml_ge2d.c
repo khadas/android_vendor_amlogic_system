@@ -108,7 +108,7 @@ int aml_ge2d_mem_alloc(aml_ge2d_info_t *pge2dinfo)
         else if (pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGB_565)
             amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 2);
         else if (pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGB_888)
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 4/3);
+            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 3);
         else if ((pge2dinfo->src_info[0].format == PIXEL_FORMAT_YCrCb_420_SP) ||
             (pge2dinfo->src_info[0].format == PIXEL_FORMAT_YV12))
             amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 3 / 2);
@@ -132,7 +132,7 @@ int aml_ge2d_mem_alloc(aml_ge2d_info_t *pge2dinfo)
         else if (pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGB_565)
             amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 2);
         else if (pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGB_888)
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 4/3);
+            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 3);
         else if ((pge2dinfo->src_info[1].format == PIXEL_FORMAT_YCrCb_420_SP) ||
             (pge2dinfo->src_info[1].format == PIXEL_FORMAT_YV12))
             amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 3 / 2);
@@ -156,7 +156,7 @@ int aml_ge2d_mem_alloc(aml_ge2d_info_t *pge2dinfo)
         else if (pge2dinfo->dst_info.format == PIXEL_FORMAT_RGB_565)
             amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 2);
         else if (pge2dinfo->dst_info.format == PIXEL_FORMAT_RGB_888)
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 4/3);
+            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 3);
         else if ((pge2dinfo->dst_info.format == PIXEL_FORMAT_YCrCb_420_SP) ||
             (pge2dinfo->dst_info.format == PIXEL_FORMAT_YV12))
             amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 3 / 2);

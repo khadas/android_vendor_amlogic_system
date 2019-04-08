@@ -203,7 +203,7 @@ static int ge2d_fillrectangle_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     D_GE2D("ge2d_fillrectangle_config_ex,memtype=%x,dst_format=%x,d_canvas_w=%d,d_canvas_h=%d,rotation=%d\n",
         output_buffer_info->memtype,dst_format,d_canvas_w,d_canvas_h,output_buffer_info->rotation);
 
-    ge2d_config_ex.src_para.mem_type = CANVAS_OSD0;
+    ge2d_config_ex.src_para.mem_type = CANVAS_TYPE_INVALID;
     ge2d_config_ex.src_para.format = src_format;
     ge2d_config_ex.src_para.left = 0;
     ge2d_config_ex.src_para.top = 0;

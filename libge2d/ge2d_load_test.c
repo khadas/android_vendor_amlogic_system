@@ -37,12 +37,12 @@ static void set_ge2dinfo(aml_ge2d_info_t *pge2dinfo)
     pge2dinfo->src_info[0].canvas_h = SY;
     pge2dinfo->src_info[0].format = PIXFORMAT;
 
-    pge2dinfo->src_info[1].memtype = GE2D_CANVAS_OSD0;
+  pge2dinfo->src_info[1].memtype = GE2D_CANVAS_ALLOC;
     pge2dinfo->src_info[1].canvas_w = SX;
     pge2dinfo->src_info[1].canvas_h = SY;
     pge2dinfo->src_info[1].format = PIXFORMAT;
 
-    pge2dinfo->dst_info.memtype = GE2D_CANVAS_OSD0;
+  pge2dinfo->dst_info.memtype = GE2D_CANVAS_ALLOC;
     pge2dinfo->dst_info.canvas_w = SX;
     pge2dinfo->dst_info.canvas_h = SY;
     pge2dinfo->dst_info.format = PIXFORMAT;
