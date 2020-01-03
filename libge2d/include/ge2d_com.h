@@ -17,11 +17,9 @@
 
 #define LOG_TAG "ge2d"
 
-#include <cutils/log.h>
-
+#include <log/log.h>
 
 //#define __DEBUG
-
 #ifdef __DEBUG
 #define D_GE2D(fmt, args...) ALOGD("GE2D Debug: " fmt, ## args)
 #else

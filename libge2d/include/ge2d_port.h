@@ -10,8 +10,8 @@
 #ifndef GE2D_PORT_H_
 #define GE2D_PORT_H_
 
-#define ge2d_fail      -1
-#define ge2d_success        0
+#define GE2D_FAIL    -1
+#define GE2D_SUCCESS  0
 
 #define OSD0        0
 #define OSD1        1
@@ -22,12 +22,19 @@
 extern "C" {
 #endif
 
+#define MAX_PLANE  4
 typedef enum {
     GE2D_CANVAS_OSD0 = 0,
     GE2D_CANVAS_OSD1,
     GE2D_CANVAS_ALLOC,
     GE2D_CANVAS_TYPE_INVALID,
-}ge2d_canvas_t;
+} ge2d_canvas_t;
+
+enum ge2d_memtype_s {
+    AML_GE2D_MEM_ION,
+    AML_GE2D_MEM_DMABUF,
+    AML_GE2D_MEM_INVALID,
+};
 
 typedef enum {
     LAYER_MODE_INVALID = 0,
@@ -63,7 +70,9 @@ typedef enum  {
     PIXEL_FORMAT_Y8                 = 0x20203859, // YYYY
     PIXEL_FORMAT_YCbCr_422_SP       = 0x10, // NV16   YYYY.....UVUV....
     PIXEL_FORMAT_YCrCb_420_SP       = 0x11, // NV21   YYYY.....UV....
-    PIXEL_FORMAT_YCbCr_422_I        = 0x14, // YUY2   Y0 U0 Y1 V0
+    PIXEL_FORMAT_YCbCr_422_UYVY        = 0x14,     // UYVY   U0-Y0-V0-Y1 U2-Y2-V2-Y3 U4 ...
+    PIXEL_FORMAT_BGR_888,
+    PIXEL_FORMAT_YCbCr_420_SP_NV12,                // NV12 YCbCr YYYY.....UV....
 }pixel_format_t;
 
 typedef enum {
@@ -89,22 +98,26 @@ typedef struct{
 }rectangle_t;
 
 typedef struct buffer_info {
+    unsigned int mem_alloc_type;
     unsigned int memtype;
-    char* vaddr;
-    unsigned long offset;
+    char* vaddr[MAX_PLANE];
+    unsigned long offset[MAX_PLANE];
     unsigned int canvas_w;
     unsigned int canvas_h;
     rectangle_t rect;
     int format;
     unsigned int rotation;
-    int shared_fd;
+    int shared_fd[MAX_PLANE];
     unsigned char plane_alpha;
     unsigned char layer_mode;
     unsigned char fill_color_en;
     unsigned int  def_color;
+    int plane_number;
 } buffer_info_t;
 
 typedef struct aml_ge2d_info {
+    int ge2d_fd; /* ge2d_fd */
+    int ion_fd;  /* ion_fd */
     unsigned int offset;
     unsigned int blend_mode;
     GE2DOP ge2d_op;
@@ -113,13 +126,18 @@ typedef struct aml_ge2d_info {
     unsigned int color;
     unsigned int gl_alpha;
     unsigned int const_color;
+    /* means do multi ge2d op */
+    unsigned int dst_op_cnt;
+    int cap_attr;
+    int b_src_swap;
     unsigned int reserved;
 } aml_ge2d_info_t;
 
 int ge2d_open(void);
 int ge2d_close(int fd);
+int ge2d_get_cap(int fd);
 int ge2d_process(int fd,aml_ge2d_info_t *pge2dinfo);
-
+int ge2d_process_ion(int fd,aml_ge2d_info_t *pge2dinfo);
 #if defined (__cplusplus)
 }
 #endif

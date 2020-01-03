@@ -17,243 +17,382 @@
 #include <malloc.h>
 #include "ge2d_port.h"
 #include "ge2d_com.h"
+#include "dmabuf.h"
 #include <IONmem.h>
 #include "aml_ge2d.h"
 #include <linux/ge2d.h>
 
-IONMEM_AllocParams cmemParm_src;
-IONMEM_AllocParams cmemParm_src2;
-IONMEM_AllocParams cmemParm_dst;
+#define CANVAS_ALIGNED(x)    (((x) + 31) & ~31)
 
-#define CANVAS_ALIGNED(x)	(((x) + 31) & ~31)
-
-aml_ge2d_t amlge2d;
-static int fd_ge2d = -1;
-
-static void fill_data(buffer_info_t *pinfo,unsigned int color)
+static void ge2d_calculate_buffer_size(const buffer_info_t* buffer,
+                                       unsigned int* size_out)
 {
-    unsigned int i = 0;
-    memset(pinfo->vaddr,0x00,amlge2d.src_size);
-    for (i=0;i<amlge2d.src_size;) {
-        pinfo->vaddr[i] = color & 0xff;
-        pinfo->vaddr[i+1] = (color & 0xff00)>>8;
-        pinfo->vaddr[i+2] = (color & 0xff0000)>>16;
-        pinfo->vaddr[i+3] = (color & 0xff000000)>>24;
-        i+=4;
+    unsigned int image_width = buffer->canvas_w;
+    switch (buffer->format) {
+        case PIXEL_FORMAT_RGBA_8888:
+        case PIXEL_FORMAT_BGRA_8888:
+        case PIXEL_FORMAT_RGBX_8888:
+            size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 4);
+            break;
+        case PIXEL_FORMAT_RGB_565:
+            size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 2);
+            break;
+        case PIXEL_FORMAT_RGB_888:
+        case PIXEL_FORMAT_BGR_888:
+            size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 3);
+            break;
+        case PIXEL_FORMAT_YCrCb_420_SP:
+        case PIXEL_FORMAT_YCbCr_420_SP_NV12:
+            if (buffer->plane_number == 1)
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 3 / 2);
+            else if (buffer->plane_number == 2) {
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h);
+                size_out[1] = CANVAS_ALIGNED(image_width * buffer->canvas_h / 2);
+            }
+            break;
+          case PIXEL_FORMAT_YV12:
+            if (buffer->plane_number == 1)
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 3 / 2);
+            else if (buffer->plane_number == 3) {
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h);
+                size_out[1] = CANVAS_ALIGNED(image_width * buffer->canvas_h / 4);
+                size_out[2] = CANVAS_ALIGNED(image_width * buffer->canvas_h / 4);
+            }
+            break;
+          case PIXEL_FORMAT_YCbCr_422_SP:
+            if (buffer->plane_number == 1)
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h * 2);
+            else if (buffer->plane_number == 2) {
+                size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h);
+                size_out[1] = CANVAS_ALIGNED(image_width * buffer->canvas_h);
+            }
+            break;
+        case PIXEL_FORMAT_Y8:
+            size_out[0] = CANVAS_ALIGNED(image_width * buffer->canvas_h);
+            break;
+        default:
+            E_GE2D("%s,%d,format not support now\n",__func__, __LINE__);
+            break;
     }
 }
-int aml_ge2d_init(void)
+
+static void ge2d_setinfo_size(aml_ge2d_t *pge2d)
 {
-    int ret = -1;
+    if (GE2D_CANVAS_ALLOC == pge2d->ge2dinfo.src_info[0].memtype) {
+        ge2d_calculate_buffer_size(&pge2d->ge2dinfo.src_info[0], pge2d->src_size);
+    }
+
+    if (GE2D_CANVAS_ALLOC == pge2d->ge2dinfo.src_info[1].memtype) {
+        ge2d_calculate_buffer_size(&pge2d->ge2dinfo.src_info[1], pge2d->src2_size);
+    }
+
+    if (GE2D_CANVAS_ALLOC == pge2d->ge2dinfo.dst_info.memtype) {
+        ge2d_calculate_buffer_size(&pge2d->ge2dinfo.dst_info, pge2d->dst_size);
+    }
+}
+
+static void ge2d_mem_free(aml_ge2d_t *pge2d)
+{
+    int i;
+
+    for (i = 0; i < pge2d->ge2dinfo.src_info[0].plane_number; i++) {
+        if (pge2d->ge2dinfo.src_info[0].vaddr[i])
+            munmap(pge2d->ge2dinfo.src_info[0].vaddr[i], pge2d->src_size[i]);
+        if (pge2d->ge2dinfo.src_info[0].shared_fd[i] != -1) {
+            D_GE2D("src close shared_fd -- %d\n",
+                pge2d->ge2dinfo.src_info[0].shared_fd[i]);
+            close(pge2d->ge2dinfo.src_info[0].shared_fd[i]);
+            pge2d->ge2dinfo.src_info[0].shared_fd[i] = -1;
+        }
+    }
+
+    for (i = 0; i < pge2d->ge2dinfo.src_info[1].plane_number; i++) {
+        if (pge2d->ge2dinfo.src_info[1].vaddr[i])
+            munmap(pge2d->ge2dinfo.src_info[1].vaddr[i], pge2d->src2_size[i]);
+        if (pge2d->ge2dinfo.src_info[1].shared_fd[i] != -1) {
+            D_GE2D("src1 close shared_fd -- %d\n",
+                pge2d->ge2dinfo.src_info[1].shared_fd[i]);
+            close(pge2d->ge2dinfo.src_info[1].shared_fd[i]);
+            pge2d->ge2dinfo.src_info[1].shared_fd[i] = -1;
+        }
+    }
+
+    for (i = 0; i < pge2d->ge2dinfo.dst_info.plane_number; i++) {
+        if (pge2d->ge2dinfo.dst_info.vaddr[i])
+            munmap(pge2d->ge2dinfo.dst_info.vaddr[i], pge2d->dst_size[i]);
+        if (pge2d->ge2dinfo.dst_info.shared_fd[i] != -1) {
+            D_GE2D("dst close shared_fd -- %d\n",
+                pge2d->ge2dinfo.dst_info.shared_fd[i]);
+            close(pge2d->ge2dinfo.dst_info.shared_fd[i]);
+            pge2d->ge2dinfo.dst_info.shared_fd[i] = -1;
+        }
+    }
+
+    D_GE2D("ge2d_mem_free!\n");
+}
+
+int aml_ge2d_get_cap(int fd_ge2d)
+{
+    return ge2d_get_cap(fd_ge2d);
+}
+
+int aml_ge2d_init(aml_ge2d_t *pge2d)
+{
+    int fd_ge2d, ion_fd, i;
+
+    for (i = 0; i < MAX_PLANE; i++) {
+        pge2d->ge2dinfo.src_info[0].shared_fd[i] = -1;
+        pge2d->ge2dinfo.src_info[1].shared_fd[i] = -1;
+        pge2d->ge2dinfo.dst_info.shared_fd[i] = -1;
+    }
     fd_ge2d = ge2d_open();
     if (fd_ge2d < 0)
-        return ge2d_fail;
-    ret = CMEM_init();
-    if (ret < 0)
-        return ge2d_fail;
-    return ge2d_success;
+        return GE2D_FAIL;
+    ion_fd = ion_mem_init();
+    if (ion_fd < 0)
+        return GE2D_FAIL;
+
+    pge2d->ge2dinfo.ge2d_fd = fd_ge2d;
+    pge2d->ge2dinfo.ion_fd = ion_fd;
+    pge2d->ge2dinfo.cap_attr = aml_ge2d_get_cap(fd_ge2d);
+
+    return GE2D_SUCCESS;
 }
 
-
-void aml_ge2d_exit(void)
+void aml_ge2d_exit(aml_ge2d_t *pge2d)
 {
-    if (fd_ge2d >= 0)
-        ge2d_close(fd_ge2d);
-    CMEM_exit();
+    if (pge2d->ge2dinfo.ge2d_fd >= 0)
+        ge2d_close(pge2d->ge2dinfo.ge2d_fd);
+    if (pge2d->ge2dinfo.ion_fd >= 0)
+        ion_mem_exit(pge2d->ge2dinfo.ion_fd);
 }
 
-void aml_ge2d_get_cap(void)
+void aml_ge2d_mem_free_ion(aml_ge2d_t *pge2d)
 {
-    int ret = -1;
-    int cap_mask = 0;
-    ret = ioctl(fd_ge2d, GE2D_GET_CAP, &cap_mask);
-    if (ret != 0) {
-        E_GE2D("%s,%d,ret %d,ioctl failed!\n",__FUNCTION__,__LINE__, ret);
-        cap_attr = -1;
+    int i;
+
+    for (i = 0; i < pge2d->ge2dinfo.src_info[0].plane_number; i++) {
+        if (pge2d->ge2dinfo.src_info[0].vaddr[i])
+            munmap(pge2d->ge2dinfo.src_info[0].vaddr[i], pge2d->src_size[i]);
     }
-    cap_attr = cap_mask;
+
+    for (i = 0; i < pge2d->ge2dinfo.src_info[1].plane_number; i++) {
+        if (pge2d->ge2dinfo.src_info[1].vaddr[i])
+            munmap(pge2d->ge2dinfo.src_info[1].vaddr[i], pge2d->src2_size[i]);
+    }
+
+    for (i = 0; i < pge2d->ge2dinfo.dst_info.plane_number; i++) {
+        if (pge2d->ge2dinfo.dst_info.vaddr[i])
+            munmap(pge2d->ge2dinfo.dst_info.vaddr[i], pge2d->dst_size[i]);
+    }
 }
 
-void aml_ge2d_mem_free(aml_ge2d_info_t *pge2dinfo)
+int aml_ge2d_mem_alloc_ion(aml_ge2d_t *pge2d)
 {
-    if (amlge2d.src_size)
-        CMEM_free(&cmemParm_src);
-    if (amlge2d.src2_size)
-        CMEM_free(&cmemParm_src2);
-    if (amlge2d.dst_size)
-        CMEM_free(&cmemParm_dst);
+    int ret = -1, i;
+    IONMEM_AllocParams ion_params;
 
-    if (pge2dinfo->src_info[0].vaddr)
-        munmap(pge2dinfo->src_info[0].vaddr, amlge2d.src_size);
-    if (pge2dinfo->src_info[1].vaddr)
-        munmap(pge2dinfo->src_info[1].vaddr, amlge2d.src2_size);
-    if (pge2dinfo->dst_info.vaddr)
-        munmap(pge2dinfo->dst_info.vaddr, amlge2d.dst_size);
+    ge2d_setinfo_size(pge2d);
 
-    D_GE2D("aml_ge2d_mem_free!\n");
-}
+    for (i = 0; i < pge2d->ge2dinfo.src_info[0].plane_number; i++) {
+        if (pge2d->src_size[i]) {
+            ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->src_size[i], &ion_params, false);
+            if (ret < 0) {
+                E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+            pge2d->ge2dinfo.src_info[0].shared_fd[i] = ion_params.mImageFd;
+            pge2d->ge2dinfo.src_info[0].vaddr[i] = (char*)mmap( NULL, pge2d->src_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, ion_params.mImageFd, 0);
 
-int aml_ge2d_mem_alloc(aml_ge2d_info_t *pge2dinfo)
-{
-    int ret = -1;
-    unsigned int input_image_width  = 0, input2_image_width = 0, output_image_width = 0;
-    unsigned int nbytes = 0;
-
-    if (GE2D_CANVAS_ALLOC == pge2dinfo->src_info[0].memtype) {
-        input_image_width  = pge2dinfo->src_info[0].canvas_w;
-        if ((pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGBA_8888) ||
-            (pge2dinfo->src_info[0].format == PIXEL_FORMAT_BGRA_8888) ||
-            (pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGBX_8888))
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 4);
-        else if (pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGB_565)
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 2);
-        else if (pge2dinfo->src_info[0].format == PIXEL_FORMAT_RGB_888)
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 3);
-        else if ((pge2dinfo->src_info[0].format == PIXEL_FORMAT_YCrCb_420_SP) ||
-            (pge2dinfo->src_info[0].format == PIXEL_FORMAT_YV12))
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 3 / 2);
-        else if ((pge2dinfo->src_info[0].format == PIXEL_FORMAT_YCbCr_422_SP) ||
-            (pge2dinfo->src_info[0].format == PIXEL_FORMAT_YCbCr_422_I))
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h * 2);
-        else if (pge2dinfo->src_info[0].format == PIXEL_FORMAT_Y8)
-            amlge2d.src_size = CANVAS_ALIGNED(input_image_width * pge2dinfo->src_info[0].canvas_h);
-        else {
-            E_GE2D("format not support now\n");
-            goto exit;
+            if (!pge2d->ge2dinfo.src_info[0].vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
         }
     }
 
-    if (GE2D_CANVAS_ALLOC == pge2dinfo->src_info[1].memtype) {
-        input2_image_width  = pge2dinfo->src_info[1].canvas_w;
-        if ((pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGBA_8888) ||
-            (pge2dinfo->src_info[1].format == PIXEL_FORMAT_BGRA_8888) ||
-            (pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGBX_8888))
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 4);
-        else if (pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGB_565)
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 2);
-        else if (pge2dinfo->src_info[1].format == PIXEL_FORMAT_RGB_888)
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 3);
-        else if ((pge2dinfo->src_info[1].format == PIXEL_FORMAT_YCrCb_420_SP) ||
-            (pge2dinfo->src_info[1].format == PIXEL_FORMAT_YV12))
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 3 / 2);
-        else if ((pge2dinfo->src_info[1].format == PIXEL_FORMAT_YCbCr_422_SP) ||
-            (pge2dinfo->src_info[1].format == PIXEL_FORMAT_YCbCr_422_I))
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h * 2);
-        else if (pge2dinfo->src_info[1].format == PIXEL_FORMAT_Y8)
-            amlge2d.src2_size = CANVAS_ALIGNED(input2_image_width * pge2dinfo->src_info[1].canvas_h);
-        else {
-            E_GE2D("format not support now\n");
-            goto exit;
+    for (i = 0; i < pge2d->ge2dinfo.src_info[1].plane_number; i++) {
+        if (pge2d->src2_size[i]) {
+            ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->src2_size[i], &ion_params, false);
+            if (ret < 0) {
+                E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+            pge2d->ge2dinfo.src_info[1].shared_fd[i] = ion_params.mImageFd;
+            pge2d->ge2dinfo.src_info[1].vaddr[i] = (char*)mmap( NULL, pge2d->src2_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, ion_params.mImageFd, 0);
+            if (!pge2d->ge2dinfo.src_info[1].vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
         }
     }
 
-    if (GE2D_CANVAS_ALLOC == pge2dinfo->dst_info.memtype) {
-        output_image_width = pge2dinfo->dst_info.canvas_w;
-        if ((pge2dinfo->dst_info.format == PIXEL_FORMAT_RGBA_8888) ||
-            (pge2dinfo->dst_info.format == PIXEL_FORMAT_BGRA_8888) ||
-            (pge2dinfo->dst_info.format == PIXEL_FORMAT_RGBX_8888))
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 4);
-        else if (pge2dinfo->dst_info.format == PIXEL_FORMAT_RGB_565)
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 2);
-        else if (pge2dinfo->dst_info.format == PIXEL_FORMAT_RGB_888)
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 3);
-        else if ((pge2dinfo->dst_info.format == PIXEL_FORMAT_YCrCb_420_SP) ||
-            (pge2dinfo->dst_info.format == PIXEL_FORMAT_YV12))
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 3 / 2);
-        else if ((pge2dinfo->dst_info.format == PIXEL_FORMAT_YCbCr_422_SP) ||
-            (pge2dinfo->dst_info.format == PIXEL_FORMAT_YCbCr_422_I))
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h * 2);
-        else if (pge2dinfo->dst_info.format == PIXEL_FORMAT_Y8)
-            amlge2d.dst_size = CANVAS_ALIGNED(output_image_width * pge2dinfo->dst_info.canvas_h);
-
-        else {
-            E_GE2D("format not support now\n");
-            goto exit;
+    for (i = 0; i < pge2d->ge2dinfo.dst_info.plane_number; i++) {
+        if (pge2d->dst_size[i]) {
+            ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->dst_size[i], &ion_params, true);
+            if (ret < 0) {
+                E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+            pge2d->ge2dinfo.dst_info.shared_fd[i] = ion_params.mImageFd;
+            pge2d->ge2dinfo.dst_info.vaddr[i] = (char*)mmap( NULL, pge2d->dst_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, ion_params.mImageFd, 0);
+            if (!pge2d->ge2dinfo.dst_info.vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
         }
+        D_GE2D("src_info[0].size=%d,src_info[1].size=%d,dst_info.size=%d\n",
+        pge2d->src_size[i],pge2d->src2_size[i],pge2d->dst_size[i]);
     }
-    if (amlge2d.src_size) {
-        ret = CMEM_alloc(amlge2d.src_size, &cmemParm_src);
-        if (ret < 0) {
-            E_GE2D("Not enough memory\n");
-            CMEM_free(&cmemParm_src);
-            return ge2d_fail;
-        }
-        pge2dinfo->src_info[0].shared_fd = cmemParm_src.mImageFd;
-        pge2dinfo->src_info[0].vaddr = (char*)mmap( NULL, amlge2d.src_size,
-            PROT_READ | PROT_WRITE, MAP_SHARED, cmemParm_src.mImageFd, 0);
-
-        if (!pge2dinfo->src_info[0].vaddr) {
-            E_GE2D("mmap failed,Not enough memory\n");
-            goto exit;
-        }
-        fill_data(&pge2dinfo->src_info[0],0x00000000);
-    }
-
-    if (amlge2d.src2_size) {
-        ret = CMEM_alloc(amlge2d.src2_size, &cmemParm_src2);
-        if (ret < 0) {
-            E_GE2D("Not enough memory\n");
-            CMEM_free(&cmemParm_src2);
-            return ge2d_fail;
-        }
-        pge2dinfo->src_info[1].shared_fd = cmemParm_src2.mImageFd;
-        pge2dinfo->src_info[1].vaddr = (char*)mmap( NULL, amlge2d.src2_size,
-            PROT_READ | PROT_WRITE, MAP_SHARED, cmemParm_src2.mImageFd, 0);
-        if (!pge2dinfo->src_info[1].vaddr) {
-            E_GE2D("mmap failed,Not enough memory\n");
-            goto exit;
-        }
-    }
-
-
-    if (amlge2d.dst_size) {
-        ret = CMEM_alloc(amlge2d.dst_size, &cmemParm_dst);
-        if (ret < 0) {
-            E_GE2D("Not enough memory\n");
-            goto exit;
-        }
-        pge2dinfo->dst_info.shared_fd = cmemParm_dst.mImageFd;
-        pge2dinfo->dst_info.vaddr = (char*)mmap( NULL, amlge2d.dst_size,
-            PROT_READ | PROT_WRITE, MAP_SHARED, cmemParm_dst.mImageFd, 0);
-
-        if (!pge2dinfo->dst_info.vaddr) {
-            E_GE2D("mmap failed,Not enough memory\n");
-            goto exit;
-        }
-    }
-
-    D_GE2D("aml_ge2d_mem_alloc: src_info[0].w=%d,src_info[1].w=%d,dst_info.w=%d\n",
-        input_image_width,input2_image_width,output_image_width);
     D_GE2D("aml_ge2d_mem_alloc: src_info[0].h=%d,dst_info.h=%d\n",
-        pge2dinfo->src_info[0].canvas_h,pge2dinfo->dst_info.canvas_h);
+        pge2d->ge2dinfo.src_info[0].canvas_h,pge2d->ge2dinfo.dst_info.canvas_h);
     D_GE2D("aml_ge2d_mem_alloc: src_info[0].format=%d,dst_info.format=%d\n",
-        pge2dinfo->src_info[0].format,pge2dinfo->dst_info.format);
-    D_GE2D("src_info[0].size=%d,src_info[1].size=%d,dst_info.size=%d\n",
-        amlge2d.src_size,amlge2d.src2_size,amlge2d.dst_size);
-    return ge2d_success;
-exit:
-    if (amlge2d.src_size)
-        CMEM_free(&cmemParm_src);
-    if (amlge2d.src2_size)
-        CMEM_free(&cmemParm_src2);
+        pge2d->ge2dinfo.src_info[0].format,pge2d->ge2dinfo.dst_info.format);
 
-    if (pge2dinfo->src_info[0].vaddr)
-        munmap(pge2dinfo->src_info[0].vaddr, amlge2d.src_size);
-    if (pge2dinfo->src_info[1].vaddr)
-        munmap(pge2dinfo->src_info[1].vaddr, amlge2d.src2_size);
-    if (amlge2d.dst_size)
-        CMEM_free(&cmemParm_dst);
-    if (pge2dinfo->dst_info.vaddr)
-        munmap(pge2dinfo->dst_info.vaddr, amlge2d.dst_size);
+    return GE2D_SUCCESS;
+exit:
+    aml_ge2d_mem_free_ion(pge2d);
     return ret;
 }
 
+void aml_ge2d_mem_free(aml_ge2d_t *pge2d)
+{
+    ge2d_mem_free(pge2d);
+}
+
+int aml_ge2d_mem_alloc(aml_ge2d_t *pge2d)
+{
+    int ret = -1, i;
+    int dma_fd = -1;
+    IONMEM_AllocParams ion_params;
+
+    ge2d_setinfo_size(pge2d);
+    for (i = 0; i < pge2d->ge2dinfo.src_info[0].plane_number; i++) {
+        if (pge2d->src_size[i]) {
+            if (pge2d->ge2dinfo.src_info[0].mem_alloc_type == AML_GE2D_MEM_ION) {
+            ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->src_size[i], &ion_params, false);
+                if (ret < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+                dma_fd = ion_params.mImageFd;
+            } else if (pge2d->ge2dinfo.src_info[i].mem_alloc_type == AML_GE2D_MEM_DMABUF) {
+                dma_fd = dmabuf_alloc(pge2d->ge2dinfo.ge2d_fd, GE2D_BUF_INPUT1,	pge2d->src_size[i]);
+                if (dma_fd < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+            }
+            pge2d->ge2dinfo.src_info[0].shared_fd[i] = dma_fd;
+            pge2d->ge2dinfo.src_info[0].vaddr[i] = (char*)mmap( NULL, pge2d->src_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, dma_fd, 0);
+
+            if (!pge2d->ge2dinfo.src_info[0].vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+        }
+    }
+
+    for (i = 0; i < pge2d->ge2dinfo.src_info[1].plane_number; i++) {
+        if (pge2d->src2_size[i]) {
+            if (pge2d->ge2dinfo.src_info[1].mem_alloc_type == AML_GE2D_MEM_ION) {
+            ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->src2_size[i], &ion_params, false);
+                if (ret < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+                dma_fd = ion_params.mImageFd;
+            } else if (pge2d->ge2dinfo.src_info[1].mem_alloc_type == AML_GE2D_MEM_DMABUF) {
+                dma_fd = dmabuf_alloc(pge2d->ge2dinfo.ge2d_fd, GE2D_BUF_INPUT2, pge2d->src2_size[i]);
+                if (dma_fd < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+            }
+            pge2d->ge2dinfo.src_info[1].shared_fd[i] = dma_fd;
+            pge2d->ge2dinfo.src_info[1].vaddr[i] = (char*)mmap( NULL, pge2d->src2_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, dma_fd, 0);
+            if (!pge2d->ge2dinfo.src_info[1].vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+        }
+    }
+
+    for (i = 0; i < pge2d->ge2dinfo.dst_info.plane_number; i++) {
+        if (pge2d->dst_size[i]) {
+            if (pge2d->ge2dinfo.dst_info.mem_alloc_type == AML_GE2D_MEM_ION) {
+                ret = ion_mem_alloc(pge2d->ge2dinfo.ion_fd, pge2d->dst_size[i], &ion_params, true);
+                if (ret < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+                dma_fd = ion_params.mImageFd;
+            } else if (pge2d->ge2dinfo.dst_info.mem_alloc_type == AML_GE2D_MEM_DMABUF) {
+                dma_fd = dmabuf_alloc(pge2d->ge2dinfo.ge2d_fd, GE2D_BUF_OUTPUT, pge2d->dst_size[i]);
+                if (dma_fd < 0) {
+                    E_GE2D("%s,%d,Not enough memory\n",__func__, __LINE__);
+                    goto exit;
+                }
+            }
+            pge2d->ge2dinfo.dst_info.shared_fd[i] = dma_fd;
+            pge2d->ge2dinfo.dst_info.vaddr[i] = (char*)mmap( NULL, pge2d->dst_size[i],
+                PROT_READ | PROT_WRITE, MAP_SHARED, dma_fd, 0);
+            //memset(pge2d->ge2dinfo.dst_info.vaddr[i], 0x0, pge2d->dst_size[i]);
+            if (!pge2d->ge2dinfo.dst_info.vaddr[i]) {
+                E_GE2D("%s,%d,mmap failed,Not enough memory\n",__func__, __LINE__);
+                goto exit;
+            }
+        }
+        D_GE2D("src_info[0].size=%d,src_info[1].size=%d,dst_info.size=%d\n",
+            pge2d->src_size[i],pge2d->src2_size[i],pge2d->dst_size[i]);
+    }
+    D_GE2D("aml_ge2d_mem_alloc: src_info[0].h=%d,dst_info.h=%d\n",
+        pge2d->ge2dinfo.src_info[0].canvas_h,pge2d->ge2dinfo.dst_info.canvas_h);
+    D_GE2D("aml_ge2d_mem_alloc: src_info[0].format=%d,dst_info.format=%d\n",
+        pge2d->ge2dinfo.src_info[0].format,pge2d->ge2dinfo.dst_info.format);
+
+    return GE2D_SUCCESS;
+exit:
+    ge2d_mem_free(pge2d);
+    return ret;
+}
 
 int aml_ge2d_process(aml_ge2d_info_t *pge2dinfo)
 {
     int ret = -1;
-    if (fd_ge2d >= 0)
-        ret = ge2d_process(fd_ge2d,pge2dinfo);
+    if (pge2dinfo->ge2d_fd >= 0)
+        ret = ge2d_process(pge2dinfo->ge2d_fd, pge2dinfo);
     return ret;
+}
+
+int aml_ge2d_process_ion(aml_ge2d_info_t *pge2dinfo)
+{
+    int ret = -1;
+    if (pge2dinfo->ge2d_fd >= 0)
+        ret = ge2d_process_ion(pge2dinfo->ge2d_fd, pge2dinfo);
+    return ret;
+}
+
+int  aml_ge2d_invalid_cache(aml_ge2d_info_t *pge2dinfo)
+{
+    int i, shared_fd = -1;
+
+    if (pge2dinfo) {
+        for (i = 0; i < pge2dinfo->dst_info.plane_number; i++) {
+            shared_fd = pge2dinfo->dst_info.shared_fd[i];
+            if (shared_fd != -1)
+                ion_mem_invalid_cache(pge2dinfo->ion_fd, shared_fd);
+        }
+    } else {
+        E_GE2D("aml_ge2d_invalid err!\n");
+        return -1;
+    }
+
+    return 0;
 }
 

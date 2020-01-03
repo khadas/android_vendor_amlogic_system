@@ -14,6 +14,7 @@
 #include <malloc.h>
 #include <string.h>
 #include <sys/time.h>  /* for gettimeofday() */
+#include <pthread.h>
 #include "ge2d_port.h"
 #include "ge2d_com.h"
 #include "aml_ge2d.h"
@@ -47,30 +48,51 @@ static int rect_color = 0xff0000ff;
 static int SRC1_PIXFORMAT = PIXEL_FORMAT_RGBA_8888;
 static int SRC2_PIXFORMAT = PIXEL_FORMAT_RGBA_8888;
 static int DST_PIXFORMAT = PIXEL_FORMAT_RGBA_8888;
-
+static int src1_mem_alloc_type = AML_GE2D_MEM_DMABUF;
+static int src2_mem_alloc_type = AML_GE2D_MEM_DMABUF;
+static int dst_mem_alloc_type = AML_GE2D_MEM_DMABUF;
 static int dst_canvas_alloc = 0;
 static int src1_canvas_alloc = 1;
 static int src2_canvas_alloc = 1;
+static int src1_plane_number = 1;
+static int src2_plane_number = 1;
+static int dst_plane_number = 1;
 static int OP = AML_GE2D_STRETCHBLIT;
 static int src1_layer_mode = 0;
 static int src2_layer_mode = 0;
 static int gb1_alpha = 0xff;
 static int gb2_alpha = 0xff;
-extern aml_ge2d_t amlge2d;
+static int num_process = 1;
+static int num_thread = 1;
+static int num_process_per_thread = 1;
+
+#define THREADS_MAX_NUM (64)
+
+static inline unsigned long myclock()
+{
+     struct timeval tv;
+
+     gettimeofday (&tv, NULL);
+
+     return (tv.tv_sec * 1000 + tv.tv_usec / 1000);
+}
 
 static void set_ge2dinfo(aml_ge2d_info_t *pge2dinfo)
 {
     pge2dinfo->src_info[0].canvas_w = SX_SRC1;
     pge2dinfo->src_info[0].canvas_h = SY_SRC1;
     pge2dinfo->src_info[0].format = SRC1_PIXFORMAT;
+    pge2dinfo->src_info[0].plane_number = src1_plane_number;
 
     pge2dinfo->src_info[1].canvas_w = SX_SRC2;
     pge2dinfo->src_info[1].canvas_h = SY_SRC2;
     pge2dinfo->src_info[1].format = SRC2_PIXFORMAT;
+    pge2dinfo->src_info[1].plane_number = src2_plane_number;
 
     pge2dinfo->dst_info.canvas_w = SX_DST;
     pge2dinfo->dst_info.canvas_h = SY_DST;
     pge2dinfo->dst_info.format = DST_PIXFORMAT;
+    pge2dinfo->dst_info.plane_number = dst_plane_number;
     pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
     pge2dinfo->offset = 0;
     pge2dinfo->ge2d_op = OP;
@@ -101,6 +123,10 @@ static void set_ge2dinfo(aml_ge2d_info_t *pge2dinfo)
             E_GE2D("not support ge2d op,exit test!\n");
             break;
     }
+    /*set to  AML_GE2D_MEM_DMABUF or AML_GE2D_MEM_ION*/
+    pge2dinfo->src_info[0].mem_alloc_type = src1_mem_alloc_type;
+    pge2dinfo->src_info[1].mem_alloc_type = src2_mem_alloc_type;
+    pge2dinfo->dst_info.mem_alloc_type = dst_mem_alloc_type;
 }
 
 static void print_usage(void)
@@ -109,18 +135,21 @@ static void print_usage(void)
     printf ("Options:\n\n");
     printf ("  --op <0:fillrect, 1:blend, 2:strechblit, 3:blit>  ge2d operation case.\n");
     printf ("  --size <WxH>                                      define src1/src2/dst size.\n");
-    printf ("  --src1_format  <num>                              define src format.\n");
+    printf ("  --src1_memtype <0: ion, 1: dmabuf>                define memory alloc type.\n");
+    printf ("  --src2_memtype <0: ion, 1: dmabuf>                define memory alloc type.\n");
+    printf ("  --dst_memtype <0: ion, 1: dmabuf>                 define memory alloc type.\n");
+    printf ("  --src1_format  <num>                              define src1 format.\n");
     printf ("  --src2_format <num>                               define src2 format.\n");
     printf ("  --dst_format  <num>                               define dst format.\n");
-    printf ("  --src1_size  <WxH>                                define src size.\n");
+    printf ("  --src1_size  <WxH>                                define src1 size.\n");
     printf ("  --src2_size <WxH>                                 define src2 size.\n");
     printf ("  --dst_size  <WxH>                                 define dst size.\n");
-    printf ("  --src1_file  <name>                               define src file.\n");
+    printf ("  --src1_file  <name>                               define src1 file.\n");
     printf ("  --src2_file <name>                                define src2 file.\n");
     printf ("  --dst_file  <name>                                define dst file.\n");
-    printf ("  --src1_canvas_alloc <num>                        define whether src need alloc mem   0:GE2D_CANVAS_OSD0 1:GE2D_CANVAS_ALLOC.\n");
+    printf ("  --src1_canvas_alloc  <num>                        define whether src1 need alloc mem   0:GE2D_CANVAS_OSD0 1:GE2D_CANVAS_ALLOC.\n");
     printf ("  --src2_canvas_alloc <num>                         defien whether src2 need alloc mem  0:GE2D_CANVAS_OSD0 1:GE2D_CANVAS_ALLOC.\n");
-    printf ("  --src1_rect  <x_y_w_h>                            define src rect.\n");
+    printf ("  --src1_rect  <x_y_w_h>                            define src1 rect.\n");
     printf ("  --src2_rect <x_y_w_h>                             define src2 rect.\n");
     printf ("  --dst_rect  <x_y_w_h>                             define dst rect.\n");
     printf ("  --bo1 <layer_mode_num>                            define src1_layer_mode.\n");
@@ -129,6 +158,12 @@ static void print_usage(void)
     printf ("  --gb2 <gb2_alpha>                                 define src2 global alpha.\n");
     printf ("  --strechblit <x0_y0_w_h-x1_y1_w1_h1>              define strechblit info.\n");
     printf ("  --fillrect <color_x_y_w_h>                        define fillrect info, color in rgba format.\n");
+    printf ("  --src1_planenumber <num>                          define src1 plane number.\n");
+    printf ("  --src2_planenumber <num>                          define src2 plane number.\n");
+    printf ("  --dst_planenumber <num>                           define dst plane number.\n");
+    printf ("  --n <num>                                         process num times for performance test.\n");
+    printf ("  --p <num>                                         multi-thread process, num of threads\n");
+    printf ("  --p_n <num>                                       num of process for every thread.\n");
     printf ("  --help                                            Print usage information.\n");
     printf ("\n");
 }
@@ -141,10 +176,22 @@ static int parse_command_line(int argc, char *argv[])
         if (strncmp (argv[i], "--", 2) == 0) {
             if (strcmp (argv[i] + 2, "help") == 0) {
                 print_usage();
-                return ge2d_fail;
+                return GE2D_FAIL;
             }
             else if (strcmp (argv[i] + 2, "op") == 0 && ++i < argc &&
                 sscanf (argv[i], "%d", &OP) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "src1_memtype") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &src1_mem_alloc_type) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "src2_memtype") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &src2_mem_alloc_type) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "dst_memtype") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &dst_mem_alloc_type) == 1) {
                 continue;
             }
             else if (strcmp (argv[i] + 2, "bo1") == 0 && ++i < argc &&
@@ -220,15 +267,15 @@ static int parse_command_line(int argc, char *argv[])
                 continue;
             }
             else if (strcmp (argv[i] + 2, "src1_file") == 0 && ++i < argc &&
-                sscanf (argv[i], "%s", &SRC1_FILE_NAME) == 1) {
+                sscanf (argv[i], "%s", SRC1_FILE_NAME) == 1) {
                 continue;
             }
             else if (strcmp (argv[i] + 2, "src2_file") == 0 && ++i < argc &&
-                sscanf (argv[i], "%s", &SRC2_FILE_NAME) == 1) {
+                sscanf (argv[i], "%s", SRC2_FILE_NAME) == 1) {
                 continue;
             }
             else if (strcmp (argv[i] + 2, "dst_file") == 0 && ++i < argc &&
-                sscanf (argv[i], "%s", &DST_FILE_NAME) == 1) {
+                sscanf (argv[i], "%s", DST_FILE_NAME) == 1) {
                 dst_canvas_alloc = 1;
                 continue;
             }
@@ -240,117 +287,162 @@ static int parse_command_line(int argc, char *argv[])
                 sscanf (argv[i], "%d", &src2_canvas_alloc) == 1) {
                 continue;
             }
+            else if (strcmp (argv[i] + 2, "src1_planenumber") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &src1_plane_number) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "src2_planenumber") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &src2_plane_number) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "dst_planenumber") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &dst_plane_number) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "n") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &num_process) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "p") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &num_thread) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "p_n") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &num_process_per_thread) == 1) {
+                continue;
+            }
         }
     }
-    return ge2d_success;
+    return GE2D_SUCCESS;
 }
 
+static int check_plane_number(int plane_number, int format)
+{
+    int ret = -1;
+    printf("plane_number=%d,format=%d\n", plane_number, format);
+    if (plane_number == 1) {
+        ret = 0;
+    } else if (plane_number == 2) {
+        if ((format == PIXEL_FORMAT_YCrCb_420_SP) ||
+            (format == PIXEL_FORMAT_YCbCr_420_SP_NV12) ||
+            (format == PIXEL_FORMAT_YCbCr_422_SP))
+            ret = 0;
+    } else if (plane_number == 3) {
+        if (format == PIXEL_FORMAT_YV12)
+            ret = 0;
+    }
+    return ret;
+}
 
-int aml_read_file_src1(const char* url , aml_ge2d_info_t *pge2dinfo)
+static int aml_read_file_src1(aml_ge2d_t *amlge2d, const char* url)
 {
     int fd = -1;
     int read_num = 0;
-    if (amlge2d.src_size == 0)
-        return 0;
+    int i;
 
     fd = open(url,O_RDONLY );
     if (fd < 0) {
         E_GE2D("read source file:%s open error\n",url);
-        return ge2d_fail;
+        return GE2D_FAIL;
     }
+    for (i = 0; i < amlge2d->ge2dinfo.src_info[0].plane_number; i++) {
+        if (amlge2d->src_size[i] == 0) {
+            E_GE2D("src_size[i]=%d\n",amlge2d->src_size[i]);
+            close(fd);
+            return 0;
+        }
 
-    amlge2d.src_data = (char*)malloc(amlge2d.src_size);
-    if (!amlge2d.src_data) {
-        E_GE2D("malloc for src_data failed\n");
-        return ge2d_fail;
+        read_num = read(fd, amlge2d->ge2dinfo.src_info[0].vaddr[i],
+                        amlge2d->src_size[i]);
+        if (read_num <= 0) {
+            E_GE2D("read file read_num=%d error\n",read_num);
+            close(fd);
+            return GE2D_FAIL;
+        }
     }
-
-    read_num = read(fd,amlge2d.src_data,amlge2d.src_size);
-    if (read_num <= 0) {
-        E_GE2D("read file read_num=%d error\n",read_num);
-        return ge2d_fail;
-    }
-
-    memcpy(pge2dinfo->src_info[0].vaddr, amlge2d.src_data, amlge2d.src_size);
     close(fd);
-    return ge2d_success;
+    return GE2D_SUCCESS;
 }
 
-int aml_read_file_src2(const char* url , aml_ge2d_info_t *pge2dinfo)
+static int aml_read_file_src2(aml_ge2d_t *amlge2d, const char* url)
 {
     int fd = -1;
     int read_num = 0;
-    if (amlge2d.src2_size == 0)
-        return 0;
+    int i;
 
     fd = open(url,O_RDONLY );
     if (fd < 0) {
         E_GE2D("read source file:%s open error\n",url);
-        return ge2d_fail;
+        return GE2D_FAIL;
     }
+    for (i = 0; i < amlge2d->ge2dinfo.src_info[1].plane_number; i++) {
+        if (amlge2d->src2_size[i] == 0) {
+            E_GE2D("src2_size[i]=%d\n",amlge2d->src2_size[i]);
+            close(fd);
+            return 0;
+        }
 
-    amlge2d.src2_data = (char*)malloc(amlge2d.src2_size);
-    if (!amlge2d.src2_data) {
-        E_GE2D("malloc for src_data failed\n");
-        return ge2d_fail;
+        read_num = read(fd, amlge2d->src2_data[i],
+                        amlge2d->ge2dinfo.src_info[1].vaddr[i]
+                        amlge2d->src2_size[i]);
+        if (read_num <= 0) {
+            E_GE2D("read file read_num=%d error\n",read_num);
+            close(fd);
+            return GE2D_FAIL;
+        }
     }
-
-    read_num = read(fd,amlge2d.src2_data,amlge2d.src2_size);
-    if (read_num <= 0) {
-        E_GE2D("read file read_num=%d error\n",read_num);
-        return ge2d_fail;
-    }
-
-    memcpy(pge2dinfo->src_info[1].vaddr, amlge2d.src2_data, amlge2d.src2_size);
     close(fd);
-    return ge2d_success;
+    return GE2D_SUCCESS;
 }
 
-int aml_write_file(const char* url , aml_ge2d_info_t *pge2dinfo)
+static int aml_write_file(aml_ge2d_t *amlge2d, const char* url)
 {
     int fd = -1;
     int write_num = 0;
+    int i;
 
-    if (amlge2d.dst_size == 0)
-        return 0;
-    if ((GE2D_CANVAS_OSD0 == pge2dinfo->dst_info.memtype)
-        || (GE2D_CANVAS_OSD1 == pge2dinfo->dst_info.memtype))
+    if ((GE2D_CANVAS_OSD0 == amlge2d->ge2dinfo.dst_info.memtype)
+        || (GE2D_CANVAS_OSD1 == amlge2d->ge2dinfo.dst_info.memtype))
         return 0;
 
     fd = open(url,O_RDWR | O_CREAT,0660);
     if (fd < 0) {
         E_GE2D("write file:%s open error\n",url);
-        return ge2d_fail;
+        return GE2D_FAIL;
     }
+    for (i = 0; i < amlge2d->ge2dinfo.dst_info.plane_number; i++) {
+        if (amlge2d->dst_size[i] == 0) {
+            E_GE2D("dst_size[%d]=%d\n",i, amlge2d->dst_size[i]);
+            close(fd);
+            return 0;
+        }
 
-    amlge2d.dst_data = (char*)malloc(amlge2d.dst_size);
-    if (!amlge2d.dst_data) {
-        E_GE2D("malloc for dst_data failed\n");
-        return ge2d_fail;
-    }
-
-    memcpy(amlge2d.dst_data,pge2dinfo->dst_info.vaddr,amlge2d.dst_size);
-    printf("pixel: 0x%2x, 0x%2x,0x%2x,0x%2x, 0x%2x,0x%2x,0x%2x,0x%2x\n",
-        amlge2d.dst_data[0],
-        amlge2d.dst_data[1],
-        amlge2d.dst_data[2],
-        amlge2d.dst_data[3],
-        amlge2d.dst_data[4],
-        amlge2d.dst_data[5],
-        amlge2d.dst_data[6],
-        amlge2d.dst_data[7]);
-    write_num = write(fd,amlge2d.dst_data,amlge2d.dst_size);
-    if (write_num <= 0) {
-        E_GE2D("write file write_num=%d error\n",write_num);
+        printf("pixel: 0x%2x, 0x%2x,0x%2x,0x%2x, 0x%2x,0x%2x,0x%2x,0x%2x\n",
+            amlge2d->ge2dinfo.dst_info.vaddr[i][0],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][1],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][2],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][3],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][4],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][5],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][6],
+            amlge2d->ge2dinfo.dst_info.vaddr[i][7]);
+        write_num = write(fd, amlge2d->ge2dinfo.dst_info.vaddr[i],
+                          amlge2d->dst_size[i]);
+        if (write_num <= 0) {
+            E_GE2D("write file write_num=%d error\n",write_num);
+            close(fd);
+        }
     }
     close(fd);
-    return ge2d_success;
+    return GE2D_SUCCESS;
 }
 
-
-static int do_fill_rectangle(aml_ge2d_info_t *pge2dinfo)
+static int do_fill_rectangle(aml_ge2d_t *amlge2d)
 {
     int ret = -1;
+    int i;
+    unsigned long stime;
+    aml_ge2d_info_t *pge2dinfo = &amlge2d->ge2dinfo;
 
     printf("do_fill_rectangle test case:\n");
 
@@ -359,33 +451,48 @@ static int do_fill_rectangle(aml_ge2d_info_t *pge2dinfo)
     pge2dinfo->dst_info.rect.y = dst_rect_y;
     pge2dinfo->dst_info.rect.w = dst_rect_w;
     pge2dinfo->dst_info.rect.h = dst_rect_h;
+    stime = myclock();
+    for (i = 0; i < num_process; i++) {
+       ret = aml_ge2d_process(pge2dinfo);
+       if (ret < 0) {
+           printf("ge2d process failed, %s (%d)\n", __func__, __LINE__);
+           return ret;
+       }
+    }
+    printf("time=%ld ms\n", myclock() - stime);
+    #if 0
+    sleep(5);
 
+    printf("please enter any key do rotation test[90]\n");
+    code = getc(stdin);
+    pge2dinfo->dst_info.rotation = GE2D_ROTATION_180;
     ret = aml_ge2d_process(pge2dinfo);
-
+    #endif
     if (ret < 0)
         printf("%s failed\n", __func__);
     return ret;
 }
 
 
-static int do_blend(aml_ge2d_info_t *pge2dinfo)
+static int do_blend(aml_ge2d_t *amlge2d)
 {
-    int ret = -1;
-
+    int ret = -1, i;
     int shared_fd_bakup;
     unsigned long offset_bakup = 0;
+    unsigned long stime;
+    aml_ge2d_info_t *pge2dinfo = &amlge2d->ge2dinfo;
 
     printf("do_blend test case:\n");
 
-    if (cap_attr == 0x1) {
+    if (pge2dinfo->cap_attr == 0x1) {
         /* do blend src1 blend src2(dst) to dst */
         printf("one step blend\n");
-        ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+        ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
         if (ret < 0)
-           return  ge2d_fail;
-        ret = aml_read_file_src2(SRC2_FILE_NAME,pge2dinfo);
+           return  GE2D_FAIL;
+        ret = aml_read_file_src2(amlge2d, SRC2_FILE_NAME);
         if (ret < 0)
-           return ge2d_fail;
+           return GE2D_FAIL;
 
         pge2dinfo->src_info[0].rect.x = src1_rect_x;
         pge2dinfo->src_info[0].rect.y = src1_rect_y;
@@ -398,8 +505,6 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[1].rect.w = src2_rect_w;
         pge2dinfo->src_info[1].rect.h = src2_rect_h;
         pge2dinfo->src_info[1].fill_color_en = 0;
-        if ((src2_layer_mode == LAYER_MODE_NON) && (src1_layer_mode == LAYER_MODE_PREMULTIPLIED))
-           pge2dinfo->src_info[0].format = PIXEL_FORMAT_RGBX_8888;
 
         pge2dinfo->dst_info.rect.x = dst_rect_x;
         pge2dinfo->dst_info.rect.y = dst_rect_y;
@@ -411,7 +516,15 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
         pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
         pge2dinfo->src_info[1].plane_alpha = gb2_alpha;
-        ret = aml_ge2d_process(pge2dinfo);
+        stime = myclock();
+        for (i = 0; i < num_process; i++) {
+           ret = aml_ge2d_process(pge2dinfo);
+           if (ret < 0) {
+               printf("ge2d process failed, %s (%d)\n", __func__, __LINE__);
+               return ret;
+           }
+        }
+        printf("time=%ld ms\n", myclock() - stime);
     } else {
         if (((gb1_alpha != 0xff)
         && (gb2_alpha != 0xff))){
@@ -419,9 +532,9 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
 
         if (src2_layer_mode == LAYER_MODE_COVERAGE) {
             printf("two steps blend,src2 LAYER_MODE_COVERAGE\n");
-            ret = aml_read_file_src1(SRC2_FILE_NAME,pge2dinfo);
+            ret = aml_read_file_src1(amlge2d, SRC2_FILE_NAME);
             if (ret < 0)
-               return  ge2d_fail;
+               return  GE2D_FAIL;
 
             /* both plane alpha, do 2 steps */
             /* step 1: strechbilt */
@@ -460,9 +573,9 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[0].plane_alpha = gb2_alpha;
             pge2dinfo->src_info[1].plane_alpha = 0xff;
             ret = aml_ge2d_process(pge2dinfo);
-            ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+            ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
             if (ret < 0)
-               return  ge2d_fail;
+               return  GE2D_FAIL;
 
             /* step2: blend src1 blend src2(dst) to dst */
             pge2dinfo->ge2d_op = AML_GE2D_BLEND;
@@ -483,8 +596,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[1].rect.y = pge2dinfo->dst_info.rect.y;
             pge2dinfo->src_info[1].rect.w = pge2dinfo->dst_info.rect.w;
             pge2dinfo->src_info[1].rect.h = pge2dinfo->dst_info.rect.h;
-            pge2dinfo->src_info[1].shared_fd = pge2dinfo->dst_info.shared_fd;
-            pge2dinfo->src_info[1].offset = pge2dinfo->dst_info.offset;
+            pge2dinfo->src_info[1].shared_fd[0] = pge2dinfo->dst_info.shared_fd[0];
+            pge2dinfo->src_info[1].offset[0] = pge2dinfo->dst_info.offset[0];
             pge2dinfo->src_info[1].fill_color_en = 0;
 
             pge2dinfo->dst_info.canvas_w = SX_DST;
@@ -502,12 +615,12 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[1].plane_alpha = gb2_alpha;
             ret = aml_ge2d_process(pge2dinfo);
         } else {
-            ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+            ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
             if (ret < 0)
-               return  ge2d_fail;
-            ret = aml_read_file_src2(SRC2_FILE_NAME,pge2dinfo);
+               return  GE2D_FAIL;
+            ret = aml_read_file_src2(amlge2d, SRC2_FILE_NAME);
             if (ret < 0)
-               return ge2d_fail;
+               return GE2D_FAIL;
             printf("two step: strechbilt+blend\n");
             /* both plane alpha, do 2 steps */
             /* step 1: strechbilt */
@@ -521,10 +634,10 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
 
-            shared_fd_bakup = pge2dinfo->src_info[0].shared_fd;
-            offset_bakup = pge2dinfo->src_info[0].offset;
-            pge2dinfo->src_info[0].shared_fd = pge2dinfo->src_info[1].shared_fd;
-            pge2dinfo->src_info[0].offset = pge2dinfo->src_info[1].offset;
+            shared_fd_bakup = pge2dinfo->src_info[0].shared_fd[0];
+            offset_bakup = pge2dinfo->src_info[0].offset[0];
+            pge2dinfo->src_info[0].shared_fd[0] = pge2dinfo->src_info[1].shared_fd[0];
+            pge2dinfo->src_info[0].offset[0] = pge2dinfo->src_info[1].offset[0];
 
             pge2dinfo->src_info[0].layer_mode = src2_layer_mode;
             pge2dinfo->src_info[0].plane_alpha = gb2_alpha;
@@ -548,8 +661,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[0].rect.y = 0;
             pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->src_info[0].shared_fd = shared_fd_bakup;
-            pge2dinfo->src_info[0].offset = offset_bakup;
+            pge2dinfo->src_info[0].shared_fd[0] = shared_fd_bakup;
+            pge2dinfo->src_info[0].offset[0] = offset_bakup;
             pge2dinfo->src_info[0].fill_color_en = 0;
 
             pge2dinfo->src_info[1].canvas_w = pge2dinfo->dst_info.canvas_w;
@@ -559,8 +672,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
             pge2dinfo->src_info[1].rect.y = pge2dinfo->dst_info.rect.y;
             pge2dinfo->src_info[1].rect.w = pge2dinfo->dst_info.rect.w;
             pge2dinfo->src_info[1].rect.h = pge2dinfo->dst_info.rect.h;
-            pge2dinfo->src_info[1].shared_fd = pge2dinfo->dst_info.shared_fd;
-            pge2dinfo->src_info[1].offset = pge2dinfo->dst_info.offset;
+            pge2dinfo->src_info[1].shared_fd[0] = pge2dinfo->dst_info.shared_fd[0];
+            pge2dinfo->src_info[1].offset[0] = pge2dinfo->dst_info.offset[0];
             pge2dinfo->src_info[1].fill_color_en = 0;
 
             pge2dinfo->dst_info.canvas_w = SX_DST;
@@ -580,9 +693,9 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         }
     } else  if (src2_layer_mode == LAYER_MODE_COVERAGE){
         printf("two steps blend,src2 LAYER_MODE_COVERAGE: two blend\n");
-        ret = aml_read_file_src1(SRC2_FILE_NAME,pge2dinfo);
+        ret = aml_read_file_src1(amlge2d, SRC2_FILE_NAME);
         if (ret < 0)
-            return ge2d_fail;
+            return GE2D_FAIL;
         /* both plane alpha, do 2 steps */
         /* step 1: strechbilt */
         pge2dinfo->ge2d_op = AML_GE2D_BLEND;
@@ -620,9 +733,9 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[0].plane_alpha = gb2_alpha;
         pge2dinfo->src_info[1].plane_alpha = 0xff;
         ret = aml_ge2d_process(pge2dinfo);
-        ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+        ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
         if (ret < 0)
-            return ge2d_fail;
+            return GE2D_FAIL;
         /* step2: blend src1 blend src2(dst) to dst */
         pge2dinfo->ge2d_op = AML_GE2D_BLEND;
 
@@ -642,8 +755,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[1].rect.y = pge2dinfo->dst_info.rect.y;
         pge2dinfo->src_info[1].rect.w = pge2dinfo->dst_info.rect.w;
         pge2dinfo->src_info[1].rect.h = pge2dinfo->dst_info.rect.h;
-        pge2dinfo->src_info[1].shared_fd = pge2dinfo->dst_info.shared_fd;
-        pge2dinfo->src_info[1].offset = pge2dinfo->dst_info.offset;
+        pge2dinfo->src_info[1].shared_fd[0] = pge2dinfo->dst_info.shared_fd[0];
+        pge2dinfo->src_info[1].offset[0] = pge2dinfo->dst_info.offset[0];
         pge2dinfo->src_info[1].fill_color_en = 0;
 
         pge2dinfo->dst_info.canvas_w = SX_DST;
@@ -663,12 +776,12 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
     } else if ((src2_layer_mode == LAYER_MODE_NON)
         && (src1_layer_mode != LAYER_MODE_PREMULTIPLIED)){
         printf("two steps blend,src2 LAYER_MODE_NON:strechbilt+blend\n");
-        ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+        ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
         if (ret < 0)
-            return ge2d_fail;
-        ret = aml_read_file_src2(SRC2_FILE_NAME,pge2dinfo);
+            return GE2D_FAIL;
+        ret = aml_read_file_src2(amlge2d, SRC2_FILE_NAME);
         if (ret < 0)
-            return ge2d_fail;
+            return GE2D_FAIL;
         /* both plane alpha, do 2 steps */
         /* step 1: strechbilt */
         pge2dinfo->ge2d_op = AML_GE2D_STRETCHBLIT;
@@ -681,10 +794,10 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
 
-        shared_fd_bakup = pge2dinfo->src_info[0].shared_fd;
-        offset_bakup = pge2dinfo->src_info[0].offset;
-        pge2dinfo->src_info[0].shared_fd = pge2dinfo->src_info[1].shared_fd;
-        pge2dinfo->src_info[0].offset = pge2dinfo->src_info[1].offset;
+        shared_fd_bakup = pge2dinfo->src_info[0].shared_fd[0];
+        offset_bakup = pge2dinfo->src_info[0].offset[0];
+        pge2dinfo->src_info[0].shared_fd[0] = pge2dinfo->src_info[1].shared_fd[0];
+        pge2dinfo->src_info[0].offset[0] = pge2dinfo->src_info[1].offset[0];
         pge2dinfo->src_info[0].layer_mode = src2_layer_mode;
         pge2dinfo->src_info[0].plane_alpha = 0xff;
         pge2dinfo->src_info[0].format = PIXEL_FORMAT_RGBX_8888;
@@ -709,8 +822,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[0].rect.y = 0;
         pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->src_info[0].shared_fd = shared_fd_bakup;
-        pge2dinfo->src_info[0].offset = offset_bakup;
+        pge2dinfo->src_info[0].shared_fd[0] = shared_fd_bakup;
+        pge2dinfo->src_info[0].offset[0] = offset_bakup;
         pge2dinfo->src_info[0].fill_color_en = 0;
 
         pge2dinfo->src_info[1].canvas_w = pge2dinfo->dst_info.canvas_w;
@@ -720,8 +833,8 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[1].rect.y = pge2dinfo->dst_info.rect.y;
         pge2dinfo->src_info[1].rect.w = pge2dinfo->dst_info.rect.w;
         pge2dinfo->src_info[1].rect.h = pge2dinfo->dst_info.rect.h;
-        pge2dinfo->src_info[1].shared_fd = pge2dinfo->dst_info.shared_fd;
-        pge2dinfo->src_info[1].offset = pge2dinfo->dst_info.offset;
+        pge2dinfo->src_info[1].shared_fd[0] = pge2dinfo->dst_info.shared_fd[0];
+        pge2dinfo->src_info[1].offset[0] = pge2dinfo->dst_info.offset[0];
         pge2dinfo->src_info[1].fill_color_en = 0;
 
         pge2dinfo->dst_info.canvas_w = SX_DST;
@@ -739,63 +852,67 @@ static int do_blend(aml_ge2d_info_t *pge2dinfo)
         pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
         pge2dinfo->src_info[1].plane_alpha = gb2_alpha;
         ret = aml_ge2d_process(pge2dinfo);
-        }  else {
-            /* do blend src1 blend src2(dst) to dst */
-            printf("one step blend\n");
-        ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
-            if (ret < 0)
-               return  ge2d_fail;
-        ret = aml_read_file_src2(SRC2_FILE_NAME,pge2dinfo);
-            if (ret < 0)
-               return ge2d_fail;
-            pge2dinfo->src_info[0].canvas_w = SX_SRC1;
-            pge2dinfo->src_info[0].canvas_h = SY_SRC1;
-            pge2dinfo->src_info[0].format = SRC1_PIXFORMAT;
-            pge2dinfo->src_info[0].rect.x = 0;
-            pge2dinfo->src_info[0].rect.y = 0;
-            pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
-            pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->src_info[0].fill_color_en = 0;
+    }  else {
+        /* do blend src1 blend src2(dst) to dst */
+        printf("one step blend\n");
+        ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
+        if (ret < 0)
+           return  GE2D_FAIL;
+        ret = aml_read_file_src2(amlge2d, SRC2_FILE_NAME);
+        if (ret < 0)
+           return GE2D_FAIL;
+        pge2dinfo->src_info[0].canvas_w = SX_SRC1;
+        pge2dinfo->src_info[0].canvas_h = SY_SRC1;
+        pge2dinfo->src_info[0].format = SRC1_PIXFORMAT;
+        pge2dinfo->src_info[0].rect.x = 0;
+        pge2dinfo->src_info[0].rect.y = 0;
+        pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
+        pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
+        pge2dinfo->src_info[0].fill_color_en = 0;
 
-            pge2dinfo->src_info[1].canvas_w = SX_SRC2;
-            pge2dinfo->src_info[1].canvas_h = SY_SRC2;
-            pge2dinfo->src_info[1].format = SRC2_PIXFORMAT;
-            pge2dinfo->src_info[1].rect.x = 0;
-            pge2dinfo->src_info[1].rect.y = 0;
-            pge2dinfo->src_info[1].rect.w = pge2dinfo->src_info[0].canvas_w;
-            pge2dinfo->src_info[1].rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->src_info[1].fill_color_en = 0;
-            if (src2_layer_mode == LAYER_MODE_NON)
-                pge2dinfo->src_info[0].format = PIXEL_FORMAT_RGBX_8888;
-            pge2dinfo->dst_info.canvas_w = SX_DST;
-            pge2dinfo->dst_info.canvas_h = SY_DST;
-            pge2dinfo->dst_info.format = DST_PIXFORMAT;
-            pge2dinfo->dst_info.rect.x = 0;
-            pge2dinfo->dst_info.rect.y = 0;
-            pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
-            pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->src_info[1].canvas_w = SX_SRC2;
+        pge2dinfo->src_info[1].canvas_h = SY_SRC2;
+        pge2dinfo->src_info[1].format = SRC2_PIXFORMAT;
+        pge2dinfo->src_info[1].rect.x = 0;
+        pge2dinfo->src_info[1].rect.y = 0;
+        pge2dinfo->src_info[1].rect.w = pge2dinfo->src_info[0].canvas_w;
+        pge2dinfo->src_info[1].rect.h = pge2dinfo->src_info[0].canvas_h;
+        pge2dinfo->src_info[1].fill_color_en = 0;
+        if (src2_layer_mode == LAYER_MODE_NON)
+            pge2dinfo->src_info[0].format = PIXEL_FORMAT_RGBX_8888;
+        pge2dinfo->dst_info.canvas_w = SX_DST;
+        pge2dinfo->dst_info.canvas_h = SY_DST;
+        pge2dinfo->dst_info.format = DST_PIXFORMAT;
+        pge2dinfo->dst_info.rect.x = 0;
+        pge2dinfo->dst_info.rect.y = 0;
+        pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
+        pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
+        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
 
-            pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
-            pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
-            pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
-            pge2dinfo->src_info[1].plane_alpha = gb2_alpha;
-            ret = aml_ge2d_process(pge2dinfo);
-        }
+        pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
+        pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
+        pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
+        pge2dinfo->src_info[1].plane_alpha = gb2_alpha;
+        ret = aml_ge2d_process(pge2dinfo);
+    }
     }
     if (ret < 0)
         printf("%s failed\n", __func__);
     return ret;
 }
 
-static int do_strechblit(aml_ge2d_info_t *pge2dinfo)
+
+static int do_strechblit(aml_ge2d_t *amlge2d)
 {
     int ret = -1;
+    int i;
+    unsigned long stime;
+    aml_ge2d_info_t *pge2dinfo = &amlge2d->ge2dinfo;
 
     printf("do_strechblit test case:\n");
-    ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+    ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
     if (ret < 0)
-       return ge2d_fail;
+       return GE2D_FAIL;
 
     pge2dinfo->src_info[0].rect.x = src1_rect_x;
     pge2dinfo->src_info[0].rect.y = src1_rect_y;
@@ -809,21 +926,40 @@ static int do_strechblit(aml_ge2d_info_t *pge2dinfo)
     pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
     pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
 
+    stime = myclock();
+    for (i = 0; i < num_process; i++) {
+       ret = aml_ge2d_process(pge2dinfo);
+       if (ret < 0) {
+           printf("ge2d process failed, %s (%d)\n", __func__, __LINE__);
+           return ret;
+       }
+    }
+    printf("time=%ld ms\n", myclock() - stime);
+    #if 0
+    sleep(5);
+
+    printf("please enter any key do rotation test[90]\n");
+    code = getc(stdin);
+    pge2dinfo->dst_info.rotation = GE2D_ROTATION_90;
     ret = aml_ge2d_process(pge2dinfo);
+    #endif
     if (ret < 0)
         printf("%s failed\n", __func__);
     return ret;
 
 }
 
-static int do_blit(aml_ge2d_info_t *pge2dinfo)
+static int do_blit(aml_ge2d_t *amlge2d)
 {
     int ret = -1;
+    int i;
+    unsigned long stime;
+    aml_ge2d_info_t *pge2dinfo = &amlge2d->ge2dinfo;
 
     printf("do_blit test case:\n");
-    ret = aml_read_file_src1(SRC1_FILE_NAME,pge2dinfo);
+    ret = aml_read_file_src1(amlge2d, SRC1_FILE_NAME);
     if (ret < 0)
-       return ge2d_fail;
+       return GE2D_FAIL;
 
     pge2dinfo->src_info[0].rect.x = src1_rect_x;
     pge2dinfo->src_info[0].rect.y = src1_rect_y;
@@ -836,76 +972,156 @@ static int do_blit(aml_ge2d_info_t *pge2dinfo)
     pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
     pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
 
+    stime = myclock();
+    for (i = 0; i < num_process; i++) {
+       ret = aml_ge2d_process(pge2dinfo);
+       if (ret < 0) {
+           printf("ge2d process failed, %s (%d)\n", __func__, __LINE__);
+           return ret;
+       }
+    }
+    printf("time=%ld ms\n", myclock() - stime);
+    #if 0
+    sleep(5);
+
+    printf("please enter any key do rotation test[90]\n");
+    code = getc(stdin);
+    pge2dinfo->dst_info.rotation = GE2D_ROTATION_90;
+    pge2dinfo->src_info[0].rect.x = 0;
+    pge2dinfo->src_info[0].rect.y = 0;
+    pge2dinfo->src_info[0].rect.w = pge2dinfo->src_info[0].canvas_w;
+    pge2dinfo->src_info[0].rect.h = pge2dinfo->src_info[0].canvas_h;
+    pge2dinfo->dst_info.rect.x = 0;
+    pge2dinfo->dst_info.rect.y = 0;
+
     ret = aml_ge2d_process(pge2dinfo);
+    #endif
     if (ret < 0)
         printf("%s failed\n", __func__);
     return ret;
 }
 
-int main(int argc, char **argv)
+void *main_run(void *arg)
 {
     int ret = -1;
+    int i = 0, run_time = 0;
+    aml_ge2d_t amlge2d;
+    char dst_file_name[128] = {};
 
-    aml_ge2d_info_t ge2dinfo;
-    memset(&amlge2d,0x0,sizeof(aml_ge2d_t));
-    amlge2d.pge2d_info = &ge2dinfo;
-    memset(&ge2dinfo, 0, sizeof(aml_ge2d_info_t));
-    memset(&(ge2dinfo.src_info[0]), 0, sizeof(buffer_info_t));
-    memset(&(ge2dinfo.src_info[1]), 0, sizeof(buffer_info_t));
-    memset(&(ge2dinfo.dst_info), 0, sizeof(buffer_info_t));
-    cap_attr = 0;
-    ret = parse_command_line(argc,argv);
-    if (ret == ge2d_fail)
-        return ge2d_success;
+    for (run_time = 0; run_time < num_process_per_thread; run_time++) {
+        printf("ThreadIdx -- %d, run time -- %d\n", *(int *)arg, run_time);
+        memset(&amlge2d, 0, sizeof(aml_ge2d_t));
+        memset(&(amlge2d.ge2dinfo.src_info[0]), 0, sizeof(buffer_info_t));
+        memset(&(amlge2d.ge2dinfo.src_info[1]), 0, sizeof(buffer_info_t));
+        memset(&(amlge2d.ge2dinfo.dst_info), 0, sizeof(buffer_info_t));
 
-    set_ge2dinfo(&ge2dinfo);
+        for (i = 0; i < MAX_PLANE; i++) {
+            amlge2d.ge2dinfo.src_info[0].shared_fd[i] = -1;
+            amlge2d.ge2dinfo.src_info[1].shared_fd[i] = -1;
+            amlge2d.ge2dinfo.dst_info.shared_fd[i] = -1;
+        }
+        set_ge2dinfo(&amlge2d.ge2dinfo);
+        ret = check_plane_number(amlge2d.ge2dinfo.src_info[0].plane_number,
+            amlge2d.ge2dinfo.src_info[0].format);
+        if (ret < 0) {
+            printf("Error src1 plane_number=[%d], format=%d\n",
+                amlge2d.ge2dinfo.src_info[0].plane_number,
+                amlge2d.ge2dinfo.src_info[0].format);
+            return NULL;
+        }
+        ret = check_plane_number(amlge2d.ge2dinfo.src_info[1].plane_number,
+            amlge2d.ge2dinfo.src_info[1].format);
+        if (ret < 0) {
+            printf("Error src2 plane_number=[%d],format=%d\n",
+                amlge2d.ge2dinfo.src_info[1].plane_number,
+                amlge2d.ge2dinfo.src_info[1].format);
+            return NULL;
+        }
+        ret = check_plane_number(amlge2d.ge2dinfo.dst_info.plane_number,
+            amlge2d.ge2dinfo.dst_info.format);
+        if (ret < 0) {
+            printf("Error dst plane_number=[%d],format=%d\n",
+                amlge2d.ge2dinfo.dst_info.plane_number,
+                amlge2d.ge2dinfo.dst_info.format);
+            return NULL;
+        }
 
-    ret = aml_ge2d_init();
-    if (ret < 0)
-        return ge2d_fail;
-    aml_ge2d_get_cap();
-    ret = aml_ge2d_mem_alloc(&ge2dinfo);
-    if (ret < 0)
-        goto exit;
+        ret = aml_ge2d_init(&amlge2d);
+        if (ret < 0)
+            return NULL;
 
-    switch (ge2dinfo.ge2d_op)
-    {
-        case AML_GE2D_FILLRECTANGLE:
-            ret = do_fill_rectangle(&ge2dinfo);
-            break;
-        case AML_GE2D_BLEND:
-            ret = do_blend(&ge2dinfo);
-            break;
-         case AML_GE2D_STRETCHBLIT:
-            ret = do_strechblit(&ge2dinfo);
-            break;
-         case AML_GE2D_BLIT:
-            ret = do_blit(&ge2dinfo);
-            break;
-         default:
-            E_GE2D("not support ge2d op,exit test!\n");
-            break;
+        ret = aml_ge2d_mem_alloc(&amlge2d);
+        if (ret < 0)
+            goto exit;
+    #if 0
+        /* if dma_buf and used fd alloc other driver */
+        /* set dma buf fd */
+        amlge2d.ge2dinfo.src_info[0].shared_fd = dma_fd;
+        amlge2d.ge2dinfo.src_info[0].memtype = GE2D_CANVAS_ALLOC;
+    #endif
+
+        switch (amlge2d.ge2dinfo.ge2d_op)
+        {
+            case AML_GE2D_FILLRECTANGLE:
+                ret = do_fill_rectangle(&amlge2d);
+                break;
+            case AML_GE2D_BLEND:
+                ret = do_blend(&amlge2d);
+                break;
+             case AML_GE2D_STRETCHBLIT:
+                ret = do_strechblit(&amlge2d);
+                break;
+             case AML_GE2D_BLIT:
+                ret = do_blit(&amlge2d);
+                break;
+             default:
+                E_GE2D("not support ge2d op,exit test!\n");
+                break;
+        }
+        if (ret < 0)
+            goto exit;
+
+        if (amlge2d.ge2dinfo.dst_info.mem_alloc_type == AML_GE2D_MEM_ION)
+            aml_ge2d_invalid_cache(&amlge2d.ge2dinfo);
+        sprintf(dst_file_name, "%s_thread%d_%d", DST_FILE_NAME, *(int *)arg, run_time);
+        ret = aml_write_file(&amlge2d, dst_file_name);
+        if (ret < 0)
+            goto exit;
+    exit:
+        aml_ge2d_mem_free(&amlge2d);
+        aml_ge2d_exit(&amlge2d);
     }
-    if (ret < 0)
-        goto exit;
-    ret = aml_write_file(DST_FILE_NAME,&ge2dinfo);
-    if (ret < 0)
-        goto exit;
-exit:
-    if (amlge2d.src_data) {
-        free(amlge2d.src_data);
-        amlge2d.src_data = NULL;
-    }
-    if (amlge2d.src2_data) {
-        free(amlge2d.src2_data);
-        amlge2d.src2_data = NULL;
-    }
-    if (amlge2d.dst_data) {
-        free(amlge2d.dst_data);
-        amlge2d.dst_data = NULL;
-    }
-    aml_ge2d_mem_free(&ge2dinfo);
-    aml_ge2d_exit();
     printf("ge2d feature_test exit!!!\n");
-    return ge2d_success;
+
+    return NULL;
+}
+
+int main(int argc, char **argv)
+{
+    int ret = -1, i;
+    pthread_t thread[THREADS_MAX_NUM];
+    int threadindex[THREADS_MAX_NUM];
+
+    if (num_thread > THREADS_MAX_NUM) {
+        E_GE2D("num of thread greater than THREADS_MAX_NUM\n");
+        return -1;
+    }
+    memset(&thread, 0, sizeof(thread));
+
+    ret = parse_command_line(argc, argv);
+    if (ret == GE2D_FAIL)
+        return GE2D_SUCCESS;
+
+    for (i = 0; i < num_thread; i++) {
+        threadindex[i] = i;
+        ret = pthread_create(&(thread[i]), NULL, main_run, (void *)&threadindex[i]);
+        if (ret != 0) {
+            E_GE2D("integral thread %d creation failed!", i);
+            return -1;
+        }
+    }
+    for (i = 0; i < num_thread; i++)
+        pthread_join(thread[i], NULL);
+
+    return 0;
 }
