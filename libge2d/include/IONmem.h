@@ -10,18 +10,19 @@
 #ifndef IONMEM_H
 #define IONMEM_H
 #include <ion/ion.h>
+#include <stdbool.h>
+#include <log/log.h>
 #if defined (__cplusplus)
 extern "C" {
 #endif
 
-#define ION_IOC_MESON_PHYS_ADDR 8
+#ifdef __DEBUG
+#define __D(fmt, args...) ALOGD("ionmem debug: " fmt, ## args)
+#else
+#define __D(fmt, args...)
+#endif
 
-
-struct meson_phys_data{
-    int handle;
-    unsigned int phys_addr;
-    unsigned int size;
-};
+#define __E(fmt, args...) ALOGE("ionmem error: " fmt, ## args)
 
 typedef struct IONMEM_AllocParams {
     ion_user_handle_t   mIonHnd;
@@ -30,25 +31,13 @@ typedef struct IONMEM_AllocParams {
     unsigned char *usr_ptr;
 } IONMEM_AllocParams;
 
+int ion_mem_init(void);
+unsigned long ion_mem_alloc(int ion_fd, size_t size, IONMEM_AllocParams *params, bool cache_flag);
+int ion_mem_invalid_cache(int ion_fd, int shared_fd);
+void ion_mem_exit(int ion_fd);
 
-#define ION_IOC_MAGIC       'I'
-
-#define ION_IOC_CUSTOM      _IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
-
-#ifdef __DEBUG
-#define __D(fmt, args...) fprintf(stderr, "CMEM Debug: " fmt, ## args)
-#else
-#define __D(fmt, args...)
-#endif
-
-#define __E(fmt, args...) fprintf(stderr, "CMEM Error: " fmt, ## args)
-
-
-int CMEM_init(void);
-unsigned long CMEM_alloc(size_t size, IONMEM_AllocParams *params);
-/*void* CMEM_getUsrPtr(unsigned long PhyAdr, int size);*/
-int CMEM_free(IONMEM_AllocParams *params);
-int CMEM_exit(void);
+#define ION_IOC_MAGIC 'I'
+#define ION_IOC_INVALID_CACHE _IOWR(ION_IOC_MAGIC, 9, struct ion_fd_data)
 
 #if defined (__cplusplus)
 }
