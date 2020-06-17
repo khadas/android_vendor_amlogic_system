@@ -163,8 +163,13 @@ int aml_ge2d_init(aml_ge2d_t *pge2d)
 
 void aml_ge2d_exit(aml_ge2d_t *pge2d)
 {
-    if (pge2d->ge2dinfo.ge2d_fd >= 0)
-        ge2d_close(pge2d->ge2dinfo.ge2d_fd);
+    int ret = -1;
+
+    if (pge2d->ge2dinfo.ge2d_fd >= 0) {
+        ret = ge2d_close(pge2d->ge2dinfo.ge2d_fd);
+        D_GE2D("exit: close ge2d fd (%s)\n",
+            ret == -1 ? strerror(errno) : "success");
+    }
     if (pge2d->ge2dinfo.ion_fd >= 0)
         ion_mem_exit(pge2d->ge2dinfo.ion_fd);
 }

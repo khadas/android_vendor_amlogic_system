@@ -62,6 +62,8 @@ int ion_mem_alloc_fd(int ion_fd, size_t size, IONMEM_AllocParams *params, unsign
             else
                 __E("don't find match heap!!\n");
         } else {
+              if (heaps)
+                  free(heaps);
             __E("heaps is NULL or no heaps,num_heaps=%d\n", num_heaps);
         }
     } else {

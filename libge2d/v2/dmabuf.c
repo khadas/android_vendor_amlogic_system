@@ -38,7 +38,7 @@ static int ge2d_alloc_dma_buffer(int ge2d_fd, unsigned int dir, unsigned int len
 
     ret = ioctl(ge2d_fd, GE2D_REQUEST_BUFF, &buf_cfg);
     if (ret < 0) {
-        E_GE2D("%s failed: %s\n", __func__, strerror(ret));
+        E_GE2D("%s failed: %s\n", __func__, strerror(errno));
         return ret;
     }
     E_GE2D("dma buffer alloc, index=%d\n", buf_cfg.index);
