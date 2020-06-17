@@ -2923,8 +2923,11 @@ int ge2d_process(int fd,aml_ge2d_info_t *pge2dinfo)
             dst_rect.y = pge2dinfo->offset + pge2dinfo->dst_info.rect.y;
 
             ret = ge2d_fillrectangle_config_ex(fd,pge2dinfo);
-            if (ret == GE2D_SUCCESS)
+            if (ret == GE2D_SUCCESS) {
                 ret = ge2d_fillrectangle(fd,&dst_rect,pge2dinfo->color);
+                if (ret < 0)
+                    E_GE2D("%s(%d) fillrect faild\n",__FUNCTION__,__LINE__);
+            }
             if (pge2dinfo->dst_info.mem_alloc_type == AML_GE2D_MEM_DMABUF)
                 sync_dst_dmabuf_to_cpu(pge2dinfo);
             break;
@@ -2943,10 +2946,15 @@ int ge2d_process(int fd,aml_ge2d_info_t *pge2dinfo)
                 pge2dinfo->dst_op_cnt = i;
                 ret = ge2d_blit_config_ex(fd,pge2dinfo);
                 if (ret == GE2D_SUCCESS) {
-                    if (is_no_alpha(pge2dinfo->src_info[0].format))
+                    if (is_no_alpha(pge2dinfo->src_info[0].format)) {
                         ret = ge2d_blit_noalpha(fd,pge2dinfo,&pge2dinfo->src_info[0].rect,dx,dy);
-                    else
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blit_noalpha faild\n",__FUNCTION__,__LINE__);
+                    } else {
                         ret = ge2d_blit(fd,pge2dinfo,&pge2dinfo->src_info[0].rect,dx,dy);
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blit faild\n",__FUNCTION__,__LINE__);
+                    }
                 }
             }
             if (pge2dinfo->dst_info.mem_alloc_type == AML_GE2D_MEM_DMABUF)
@@ -2967,12 +2975,15 @@ int ge2d_process(int fd,aml_ge2d_info_t *pge2dinfo)
                 pge2dinfo->dst_op_cnt = i;
                 ret = ge2d_blit_config_ex(fd,pge2dinfo);
                 if (ret == GE2D_SUCCESS) {
-
-                    if (is_no_alpha(pge2dinfo->src_info[0].format))
+                    if (is_no_alpha(pge2dinfo->src_info[0].format)) {
                         ret = ge2d_strechblit_noalpha(fd,pge2dinfo,&pge2dinfo->src_info[0].rect,&dst_rect);
-                    else
+                        if (ret < 0)
+                            E_GE2D("%s(%d) stretchblit_noalpha faild\n",__FUNCTION__,__LINE__);
+                    } else {
                         ret = ge2d_strechblit(fd,pge2dinfo,&pge2dinfo->src_info[0].rect,&dst_rect);
-
+                        if (ret < 0)
+                            E_GE2D("%s(%d) stretchblit faild\n",__FUNCTION__,__LINE__);
+                    }
                 }
             }
             if (pge2dinfo->dst_info.mem_alloc_type == AML_GE2D_MEM_DMABUF)
@@ -3002,23 +3013,33 @@ int ge2d_process(int fd,aml_ge2d_info_t *pge2dinfo)
                 if ((is_no_alpha(pge2dinfo->src_info[0].format))
                     || (is_no_alpha(pge2dinfo->src_info[1].format))
                     || (pge2dinfo->src_info[0].layer_mode == LAYER_MODE_NON)) {
-                    if (pge2dinfo->b_src_swap)
+                    if (pge2dinfo->b_src_swap) {
                         ret = ge2d_blend_noalpha(fd,pge2dinfo,&(pge2dinfo->src_info[1].rect),
                             &(pge2dinfo->src_info[0].rect),
                             &dst_rect,pge2dinfo->blend_mode);
-                    else
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blend_noalpha faild\n",__FUNCTION__,__LINE__);
+                    } else {
                         ret = ge2d_blend_noalpha(fd,pge2dinfo,&(pge2dinfo->src_info[0].rect),
                             &(pge2dinfo->src_info[1].rect),
                             &dst_rect,pge2dinfo->blend_mode);
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blend_noalpha faild\n",__FUNCTION__,__LINE__);
+                    }
                 } else {
-                    if (pge2dinfo->b_src_swap)
+                    if (pge2dinfo->b_src_swap) {
                         ret = ge2d_blend(fd,pge2dinfo,&(pge2dinfo->src_info[1].rect),
                             &(pge2dinfo->src_info[0].rect),
                             &dst_rect,pge2dinfo->blend_mode);
-                    else
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blend faild\n",__FUNCTION__,__LINE__);
+                    } else {
                         ret = ge2d_blend(fd,pge2dinfo,&(pge2dinfo->src_info[0].rect),
                             &(pge2dinfo->src_info[1].rect),
                             &dst_rect,pge2dinfo->blend_mode);
+                        if (ret < 0)
+                            E_GE2D("%s(%d) blend faild\n",__FUNCTION__,__LINE__);
+                    }
                 }
             }
             if (pge2dinfo->dst_info.mem_alloc_type == AML_GE2D_MEM_DMABUF)
