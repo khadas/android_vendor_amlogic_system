@@ -10,6 +10,7 @@
 #ifndef GE2D_H
 #define GE2D_H
 
+#include <ge2d_port.h>
 #define CONFIG_GE2D_SRC2
 #define OPERATION_ADD           0    /* Cd = Cs*Fs+Cd*Fd */
 #define OPERATION_SUB           1    /* Cd = Cs*Fs-Cd*Fd */
@@ -278,6 +279,8 @@ struct config_para_ex_memtype_s {
 	unsigned int src1_mem_alloc_type;
 	unsigned int src2_mem_alloc_type;
 	unsigned int dst_mem_alloc_type;
+	/* for customized matrix */
+	struct ge2d_matrix_s matrix_custom;
 };
 
 struct config_ge2d_para_ex_s {
@@ -298,6 +301,8 @@ struct ge2d_dmabuf_exp_s {
 	unsigned int flags;
 	int fd;
 };
+
+#define GE2D_MATRIX_CUSTOM      (1 << 29)
 
 #define GE2D_ENDIAN_SHIFT       24
 #define GE2D_ENDIAN_MASK        (0x1 << GE2D_ENDIAN_SHIFT)
