@@ -126,7 +126,8 @@ static int is_no_alpha(int format)
         return 0;
 }
 
-static int is_need_swap_src2(int format,buffer_info_t *src2, buffer_info_t *dst)
+static int is_need_swap_src2(int format,buffer_info_t *src2, buffer_info_t *dst,
+                             int cap_attr)
 {
     int ret = 0;
     /* src2 not support nv21/nv12/yv12, swap src1 and src2 */
@@ -135,6 +136,9 @@ static int is_need_swap_src2(int format,buffer_info_t *src2, buffer_info_t *dst)
         ret = 1;
     else
         ret = 0;
+
+    if (cap_attr & SRC2_REPEAT)
+        return ret;
 
     /* src2 scaler, swap src1 and src2 */
     if (!ret) {
@@ -554,13 +558,15 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     buffer_info_t* input2_buffer_info = &pge2dinfo->src_info[1];
     buffer_info_t* output_buffer_info = &pge2dinfo->dst_info;
     /* src2 not support nv21/nv12/yv12, swap src1 and src2 */
-    if (is_need_swap_src2(input2_buffer_info->format, input2_buffer_info, output_buffer_info)) {
+    if (is_need_swap_src2(input2_buffer_info->format, input2_buffer_info,
+                          output_buffer_info, cap_attr)) {
         input_buffer_info = &pge2dinfo->src_info[1];
         input2_buffer_info = &pge2dinfo->src_info[0];
         b_src_swap = 1;
         D_GE2D("NOTE:src2 not support nv21/nv12, swap src1 and src2!\n");
     }
-    else if ((cap_attr == 0) && (input_buffer_info->plane_alpha == 0xff) &&
+    else if (!(cap_attr & SRC2_ALPHA) &&
+        (input_buffer_info->plane_alpha == 0xff) &&
         (input2_buffer_info->plane_alpha != 0xff) &&
         (input_buffer_info->layer_mode != LAYER_MODE_NON) &&
         (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED)) {
@@ -639,7 +645,7 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     ge2d_config_ex.src2_para.height = input2_buffer_info->rect.h;
     ge2d_config_ex.src2_para.color = input2_buffer_info->def_color;
     ge2d_config_ex.src2_para.fill_color_en = input2_buffer_info->fill_color_en;
-    if (cap_attr == 0x1) {
+    if (cap_attr & SRC2_ALPHA) {
         if (input2_buffer_info->layer_mode == LAYER_MODE_PREMULTIPLIED)
             ge2d_config_ex.src2_cmult_asel = 2;
         else if (input2_buffer_info->layer_mode == LAYER_MODE_COVERAGE)
@@ -888,7 +894,7 @@ static int ge2d_blend_config_ex_ion(int fd,aml_ge2d_info_t *pge2dinfo)
     ge2d_config_ex.alu_const_color = pge2dinfo->const_color;
     ge2d_config_ex.src1_gb_alpha = input_buffer_info->plane_alpha & 0xff;
     ge2d_config_ex.src1_gb_alpha_en = 1;
-    if (cap_attr == 0x1) {
+    if (cap_attr & SRC2_ALPHA) {
         ge2d_config_ex.src2_gb_alpha = input2_buffer_info->plane_alpha & 0xff;
         ge2d_config_ex.src2_gb_alpha_en = 1;
     }
