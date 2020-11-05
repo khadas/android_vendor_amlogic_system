@@ -81,6 +81,14 @@ typedef enum  {
 /* if customized stride is used, set this flag in format */
 #define STRIDE_CUSTOM               (0x40000000)
 
+/* capability flags */
+#define CANVAS_STATUS   ((1 << 5) | (1 << 6))
+#define HAS_SELF_POWER  (1 << 4)
+#define DEEP_COLOR      (1 << 3)
+#define ADVANCED_MATRIX (1 << 2)
+#define SRC2_REPEAT     (1 << 1)
+#define SRC2_ALPHA      (1 << 0)
+
 typedef enum {
     GE2D_ROTATION_0,
     GE2D_ROTATION_90,
