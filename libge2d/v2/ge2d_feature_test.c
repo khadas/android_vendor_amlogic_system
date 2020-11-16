@@ -65,16 +65,38 @@ static int gb2_alpha = 0xff;
 static int num_process = 1;
 static int num_thread = 1;
 static int num_process_per_thread = 1;
+static int rotation_option = 0;
 
 #define THREADS_MAX_NUM (64)
 
+static int ge2d_rotation(int rotation_option)
+{
+    switch (rotation_option) {
+    case 0:
+        return GE2D_ROTATION_0;
+    case 1:
+        return GE2D_ROTATION_90;
+    case 2:
+        return GE2D_ROTATION_180;
+    case 3:
+        return GE2D_ROTATION_270;
+    case 4:
+        return GE2D_MIRROR_X;
+    case 5:
+        return GE2D_MIRROR_Y;
+    default:
+        E_GE2D("wrong ge2d rotation option\n");
+        return 0;
+    }
+}
+
 static inline unsigned long myclock()
 {
-     struct timeval tv;
+    struct timeval tv;
 
-     gettimeofday (&tv, NULL);
+    gettimeofday (&tv, NULL);
 
-     return (tv.tv_sec * 1000 + tv.tv_usec / 1000);
+    return (tv.tv_sec * 1000 + tv.tv_usec / 1000);
 }
 
 static void set_ge2dinfo(aml_ge2d_info_t *pge2dinfo)
@@ -93,7 +115,7 @@ static void set_ge2dinfo(aml_ge2d_info_t *pge2dinfo)
     pge2dinfo->dst_info.canvas_h = SY_DST;
     pge2dinfo->dst_info.format = DST_PIXFORMAT;
     pge2dinfo->dst_info.plane_number = dst_plane_number;
-    pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+    pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
     pge2dinfo->offset = 0;
     pge2dinfo->ge2d_op = OP;
     pge2dinfo->blend_mode = BLEND_MODE_PREMULTIPLIED;
@@ -164,6 +186,7 @@ static void print_usage(void)
     printf ("  --n <num>                                         process num times for performance test.\n");
     printf ("  --p <num>                                         multi-thread process, num of threads\n");
     printf ("  --p_n <num>                                       num of process for every thread.\n");
+    printf ("  --r <num>                                         rotation option, 0/1/2/3/4/5 for 0/90/180/270/H-mirror/V-mirror.\n");
     printf ("  --help                                            Print usage information.\n");
     printf ("\n");
 }
@@ -305,6 +328,10 @@ static int parse_command_line(int argc, char *argv[])
             }
             else if (strcmp (argv[i] + 2, "p") == 0 && ++i < argc &&
                 sscanf (argv[i], "%d", &num_thread) == 1) {
+                continue;
+            }
+            else if (strcmp (argv[i] + 2, "r") == 0 && ++i < argc &&
+                sscanf (argv[i], "%d", &rotation_option) == 1) {
                 continue;
             }
             else if (strcmp (argv[i] + 2, "p_n") == 0 && ++i < argc &&
@@ -510,7 +537,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = dst_rect_y;
         pge2dinfo->dst_info.rect.w = dst_rect_w;
         pge2dinfo->dst_info.rect.h = dst_rect_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
         pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
         pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
@@ -566,7 +593,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
             pge2dinfo->dst_info.rect.y = 0;
             pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+            pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
             pge2dinfo->src_info[0].layer_mode = LAYER_MODE_COVERAGE;
             pge2dinfo->src_info[1].layer_mode = LAYER_MODE_COVERAGE;
@@ -607,7 +634,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
             pge2dinfo->dst_info.rect.y = 0;
             pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+            pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
             pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
             pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
@@ -648,7 +675,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
             pge2dinfo->dst_info.rect.y = 0;
             pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+            pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
             ret = aml_ge2d_process(pge2dinfo);
 
             /* step2: blend src1 blend src2(dst) to dst */
@@ -683,7 +710,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
             pge2dinfo->dst_info.rect.y = 0;
             pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
             pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-            pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+            pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
             pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
             pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
@@ -726,7 +753,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = 0;
         pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
         pge2dinfo->src_info[0].layer_mode = LAYER_MODE_COVERAGE;
         pge2dinfo->src_info[1].layer_mode = LAYER_MODE_COVERAGE;
@@ -766,7 +793,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = 0;
         pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
         pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
         pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
@@ -809,7 +836,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = 0;
         pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
         ret = aml_ge2d_process(pge2dinfo);
 
         /* step2: blend src1 blend src2(dst) to dst */
@@ -844,7 +871,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = 0;
         pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
         printf("two steps blend,src1_layer_mode=%d,src2_layer_mode=%d\n",src1_layer_mode,src2_layer_mode);
 
         pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
@@ -887,7 +914,7 @@ static int do_blend(aml_ge2d_t *amlge2d)
         pge2dinfo->dst_info.rect.y = 0;
         pge2dinfo->dst_info.rect.w = pge2dinfo->src_info[0].canvas_w;
         pge2dinfo->dst_info.rect.h = pge2dinfo->src_info[0].canvas_h;
-        pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+        pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
 
         pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
         pge2dinfo->src_info[1].layer_mode = src2_layer_mode;
@@ -922,7 +949,7 @@ static int do_strechblit(aml_ge2d_t *amlge2d)
     pge2dinfo->dst_info.rect.y = dst_rect_y;
     pge2dinfo->dst_info.rect.w = dst_rect_w;
     pge2dinfo->dst_info.rect.h = dst_rect_h;
-    pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+    pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
     pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
     pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
 
@@ -968,7 +995,7 @@ static int do_blit(aml_ge2d_t *amlge2d)
     pge2dinfo->dst_info.rect.x = dst_rect_x;
     pge2dinfo->dst_info.rect.y = dst_rect_y;
 
-    pge2dinfo->dst_info.rotation = GE2D_ROTATION_0;
+    pge2dinfo->dst_info.rotation = ge2d_rotation(rotation_option);
     pge2dinfo->src_info[0].layer_mode = src1_layer_mode;
     pge2dinfo->src_info[0].plane_alpha = gb1_alpha;
 
