@@ -191,7 +191,11 @@ bool AC3FrameScanner::parseHeader()
     if (mDataType == SPDIF_DATA_TYPE_E_AC3) {
         mStreamType = mHeaderBuffer[2] >> 6; // strmtyp in spec
         mSubstreamID = (mHeaderBuffer[2] >> 3) & 0x07;
-
+        //for dd frame, bsmod is contained in frame header
+        //for ddp frame, the bsmod is depending on bse_infomdate(informational metadata)
+        //if the flag == 1, there will be bsmod there.It is too difficult to parse
+        //to much data to get the information, we assume it is 0.
+        mDataTypeInfo = 0;
         // Frame size is explicit in EAC3. Paragraph E2.3.1.3
         uint32_t frmsiz = ((mHeaderBuffer[2] & 0x07) << 8) + mHeaderBuffer[3];
         mFrameSizeBytes = (frmsiz + 1) * sizeof(int16_t);
