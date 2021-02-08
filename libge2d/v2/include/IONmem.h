@@ -24,6 +24,8 @@ extern "C" {
 
 #define __E(fmt, args...) ALOGE("ionmem error: " fmt, ## args)
 
+#define ION_FLAG_EXTEND_MESON_HEAP          (1 << 30)
+
 typedef struct IONMEM_AllocParams {
     ion_user_handle_t   mIonHnd;
     int                 mImageFd;

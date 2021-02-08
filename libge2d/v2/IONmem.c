@@ -115,6 +115,7 @@ unsigned long ion_mem_alloc(int ion_fd, size_t size, IONMEM_AllocParams *params,
         }
         ion_free(ion_fd, params->mIonHnd);
     } else {
+        flag |= ION_FLAG_EXTEND_MESON_HEAP;
         ret = ion_mem_alloc_fd(ion_fd, size, params, flag,
                                     ION_HEAP_TYPE_DMA_MASK);
         if (ret < 0)
