@@ -35,6 +35,8 @@ typedef struct IONMEM_AllocParams {
 
 #define ION_IOC_CUSTOM      _IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
 
+#define ION_FLAG_EXTEND_MESON_HEAP          (1 << 30)
+
 #ifdef __DEBUG
 #define __D(fmt, args...) fprintf(stderr, "CMEM Debug: " fmt, ## args)
 #else

@@ -10,6 +10,7 @@ LOCAL_C_INCLUDES := $(LOCAL_PATH)/include $(LOCAL_PATH)/kernel-headers
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include \
      $(LOCAL_PATH)/kernel-headers \
+     system/core/libion/ \
      system/core/libion/include/ \
      system/core/libion/kernel-headers \
      system/core/include/ion
@@ -32,6 +33,7 @@ LOCAL_SRC_FILES:= aml_ge2d.c IONmem.c ge2d_feature_test.c
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include \
     $(LOCAL_PATH)/kernel-headers \
+	system/core/libion/ \
 	system/core/libion/include/ \
 	system/core/libion/kernel-headers \
 	system/core/include/ion
@@ -62,6 +64,7 @@ LOCAL_SRC_FILES:= aml_ge2d.c IONmem.c ge2d_load_test.c
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include \
     $(LOCAL_PATH)/kernel-headers \
+	system/core/libion/ \
 	system/core/libion/include/ \
 	system/core/libion/kernel-headers \
 	system/core/include/ion
@@ -92,6 +95,7 @@ LOCAL_SRC_FILES:= aml_ge2d.c IONmem.c ge2d_chip_check.c
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/include \
     $(LOCAL_PATH)/kernel-headers \
+	system/core/libion/ \
 	system/core/libion/include/ \
 	system/core/libion/kernel-headers \
 	system/core/include/ion

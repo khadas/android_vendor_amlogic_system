@@ -8,6 +8,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -17,6 +18,7 @@
 #include <errno.h>
 #include <string.h>
 #include <ion/ion.h>
+#include <ion_4.12.h>
 #include "IONmem.h"
 
 static int cmem_fd = -2;
@@ -75,60 +77,101 @@ int CMEM_init(void)
     return 0;
 }
 
+int ion_mem_alloc_fd(int ion_fd, size_t size, IONMEM_AllocParams *params, unsigned int flag, unsigned int alloc_hmask)
+{
+    int ret = -1;
+    int num_heaps = 0;
+    unsigned int heap_mask = 0;
+
+    if (ion_query_heap_cnt(ion_fd, &num_heaps) >= 0) {
+        __D("num_heaps=%d\n", num_heaps);
+        struct ion_heap_data *const heaps = (struct ion_heap_data *)malloc(num_heaps * sizeof(struct ion_heap_data));
+        if (heaps != NULL && num_heaps) {
+            if (ion_query_get_heaps(ion_fd, num_heaps, heaps) >= 0) {
+                for (int i = 0; i != num_heaps; ++i) {
+                    __D("heaps[%d].type=%d, heap_id=%d\n", i, heaps[i].type, heaps[i].heap_id);
+                    if ((1 << heaps[i].type) == alloc_hmask) {
+                        heap_mask = 1 << heaps[i].heap_id;
+                        __D("%d, m=%x, 1<<heap_id=%x, heap_mask=%x, name=%s, alloc_hmask=%x\n",
+                            heaps[i].type, 1<<heaps[i].type, heaps[i].heap_id, heap_mask, heaps[i].name, alloc_hmask);
+                        break;
+                    }
+                }
+            }
+            free(heaps);
+            if (heap_mask)
+                ret = ion_alloc_fd(ion_fd, size, 0, heap_mask, flag, &params->mImageFd);
+            else
+                __E("don't find match heap!!\n");
+        } else {
+              if (heaps)
+                  free(heaps);
+            __E("heaps is NULL or no heaps,num_heaps=%d\n", num_heaps);
+        }
+    } else {
+        __E("query_heap_cnt fail! no ion heaps for alloc!!!\n");
+    }
+    if (ret < 0) {
+        __E("ion_alloc failed, errno=%d\n", errno);
+        return -ENOMEM;
+    }
+    return ret;
+}
 
 unsigned long CMEM_alloc(size_t size, IONMEM_AllocParams *params)
 {
     int ret = 0;
+    int legacy_ion = 0;
 
     if (!validate_init()) {
         return 0;
     }
 
-    ret = ion_alloc(cmem_fd, size, 0, 1 << ION_HEAP_TYPE_CUSTOM, 0, &params->mIonHnd);
-    if (ret < 0) {
-        ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_CARVEOUT_MASK, 0, &params->mIonHnd);
+    legacy_ion = ion_is_legacy(cmem_fd);
+    if (legacy_ion) {
+        ret = ion_alloc(cmem_fd, size, 0, 1 << ION_HEAP_TYPE_CUSTOM, 0, &params->mIonHnd);
         if (ret < 0) {
-            ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_TYPE_DMA_MASK, 0, &params->mIonHnd); 
-                if (ret < 0) {
-                    ret = ion_close(cmem_fd);
-                    if (ret < 0)
-                        __E("ion_close failed, errno=%d", errno);
-                    __E("ion_alloc failed, errno=%d", errno);
-                    cmem_fd = -1;
-                    return -ENOMEM;
-                }
+            ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_CARVEOUT_MASK, 0, &params->mIonHnd);
+            if (ret < 0) {
+                ret = ion_alloc(cmem_fd, size, 0, ION_HEAP_TYPE_DMA_MASK, 0, &params->mIonHnd);
+                    if (ret < 0) {
+                        ret = ion_close(cmem_fd);
+                        if (ret < 0)
+                            __E("ion_close failed, errno=%d", errno);
+                        __E("ion_alloc failed, errno=%d", errno);
+                        cmem_fd = -1;
+                        return -ENOMEM;
+                    }
+            }
+        }
+        ret = ion_share(cmem_fd, params->mIonHnd, &params->mImageFd);
+        if (ret < 0) {
+            __E("ion_share failed, errno=%d", errno);
+            ion_free(cmem_fd, params->mIonHnd);
+            ret = ion_close(cmem_fd);
+            if (ret < 0)
+                __E("ion_close failed, errno=%d", errno);
+            cmem_fd = -1;
+            return -EINVAL;
+        }
+    } else {
+        unsigned flag = 0;
+
+        flag |= ION_FLAG_EXTEND_MESON_HEAP;
+        ret = ion_mem_alloc_fd(cmem_fd, size, params, flag,
+                                    ION_HEAP_TYPE_DMA_MASK);
+        if (ret < 0)
+            ret = ion_mem_alloc_fd(cmem_fd, size, params, flag,
+                                        ION_HEAP_CARVEOUT_MASK);
+        if (ret < 0)
+                ret = ion_mem_alloc_fd(cmem_fd, size, params, flag,
+                                            ION_HEAP_TYPE_CUSTOM);
+        if (ret < 0) {
+            __E("%s failed, errno=%d\n", __func__, errno);
+            return -ENOMEM;
         }
     }
-    ret = ion_share(cmem_fd, params->mIonHnd, &params->mImageFd);
-    if (ret < 0) {
-        __E("ion_share failed, errno=%d", errno);
-        ion_free(cmem_fd, params->mIonHnd);
-        ret = ion_close(cmem_fd);
-        if (ret < 0)
-            __E("ion_close failed, errno=%d", errno);
-        cmem_fd = -1;
-        return -EINVAL;
-    }
 
-    #if 0
-    phy_data.handle = params->mImageFd;
-    phy_data.phys_addr = 0;
-    phy_data.size = 0;
-
-    custom_data.cmd = ION_IOC_MESON_PHYS_ADDR;
-    custom_data.arg = (unsigned long)&phy_data;
-
-    ret = ioctl(cmem_fd, ION_IOC_CUSTOM, (unsigned long)&custom_data);
-    if (ret < 0) {
-        __D("ion custom ioctl %x failed with code %d: %s\n",
-            ION_IOC_MESON_PHYS_ADDR, ret, strerror(errno));
-    } else {
-        PhyAdrr = phy_data.phys_addr;
-    }
-    __D("allocate ion buffer for capture, ret=%d, bytes=%d, PysAdrr=%ld .\n",
-        ret, size, PhyAdrr);
-    return PhyAdrr;
-    #endif
     return ret;
 }
 

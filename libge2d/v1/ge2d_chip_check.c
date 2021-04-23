@@ -431,7 +431,6 @@ int main(int argc, char **argv)
     if (ret < 0)
         printf("GE2D: strechbilt + rotate 180 [FAILED]\n");
     else {
-        printf("GE2D: strechbilt + rotate 180 [PASSED]\n");
         aml_generate_src1((char *)color_bar_rotate,&ge2dinfo);
         aml_generate_src2(0x40000000,&ge2dinfo);
         ge2dinfo.ge2d_op = AML_GE2D_BLEND;
@@ -439,15 +438,13 @@ int main(int argc, char **argv)
         ret = compare_data((char *)color_bar_blend, ge2dinfo.dst_info.vaddr, amlge2d.dst_size);
         if (ret < 0)
             printf("GE2D: blend [FAILED]\n");
-        else
-            printf("GE2D: blend [PASSED]\n");
     }
     etime = myclock();
     D_GE2D("used time %d ms\n",etime - stime);
     if (ret < 0)
-        printf("GE2D:bad chip found!\n");
+        printf("===ge2d_slt_test:failed===\n");
     else
-        printf("GE2D:chip work fine!\n");
+        printf("===ge2d_slt_test:pass===\n");
 exit:
     if (amlge2d.src_data) {
         free(amlge2d.src_data);
