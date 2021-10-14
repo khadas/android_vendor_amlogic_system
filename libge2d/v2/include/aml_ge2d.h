@@ -34,6 +34,7 @@ int aml_ge2d_mem_alloc(aml_ge2d_t *pge2d);
 void aml_ge2d_mem_free(aml_ge2d_t *pge2d);
 int aml_ge2d_process(aml_ge2d_info_t *pge2dinfo);
 int aml_ge2d_process_ion(aml_ge2d_info_t *pge2dinfo); /* for old interface */
+int  aml_ge2d_sync_cache(aml_ge2d_info_t *pge2dinfo, int src_id);
 int  aml_ge2d_invalid_cache(aml_ge2d_info_t *pge2dinfo);
 
 #if defined (__cplusplus)

@@ -35,6 +35,8 @@ typedef struct IONMEM_AllocParams {
 
 int ion_mem_init(void);
 unsigned long ion_mem_alloc(int ion_fd, size_t size, IONMEM_AllocParams *params, bool cache_flag);
+int ion_mem_sync_cache(int ion_fd, int shared_fd);
+
 int ion_mem_invalid_cache(int ion_fd, int shared_fd);
 void ion_mem_exit(int ion_fd);
 
